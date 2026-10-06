@@ -31,7 +31,7 @@ def behavior(info, amt, ctx):
     avg = statistics.mean([h["amount"] for h in ok] or [850])
     known = {c["vpa"] for c in CONTACTS} | {h["vpa"] for h in ok}
     R = []
-    if amt > avg * 8: R.append({"title": "Amount is higher than your normal pattern", "why": f"Rs {amt:,.0f} vs usual Rs {avg:,.0f}.", "w": 24})
+    if amt > avg * 8: R.append({"title": "Amount is much higher than your normal pattern", "why": f"Rs {amt:,.0f} vs usual Rs {avg:,.0f}.", "w": 40})
     if info["vpa"] and info["vpa"] not in known: R.append({"title": "Recipient has limited transaction history", "why": "First payment to this ID.", "w": 12})
     if ctx["device"] != "Pixel 7": R.append({"title": "Payment from an unrecognised device", "why": ctx["device"], "w": 15})
     if ctx["city"] != "Chennai": R.append({"title": "Unusual location", "why": f"{ctx['city']} instead of Chennai.", "w": 10})
@@ -51,6 +51,7 @@ def local_guard(info, amt, ctx, payload, elapsed_ms):
     return {"id": gid, "ref": None, "score": score, "ms": elapsed_ms, "blocked": score >= 55,
             "needs_code": False, "level": "high" if score >= 55 else "medium" if score >= 25 else "low",
             "reasons": reasons, "source": "demo" if DEMO_ALERTS else "local",
+            "payload": payload, "amount": amt, "auto_stopped": False,
             "verify": {"Recipient ID": info["vpa"] or "None",
                        "Registered name": info["registered"] or "Not verified by bank",
                        "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}",
@@ -74,6 +75,14 @@ def resolve(t):
 
 def spent():
     return sum(h["amount"] for h in HIST if h.get("dr") and h["status"] == "Success" and time.time() - h["ts"] < 86400)
+
+
+def record_stopped_payment(info, amt, bank, demo=False):
+    HIST.insert(0, {"id": len(HIST) + 1, "name": info["name"], "vpa": info["vpa"] or "unknown",
+                    "amount": amt, "bank": bank or "", "utr": "-", "time": time.strftime("%d %b, %I:%M %p"),
+                    "status": "Stopped automatically · demo alert" if demo else "Stopped by PhishGuard",
+                    "note": "Simulated high-risk warning" if demo else "High-risk payment blocked",
+                    "ts": time.time(), "dr": False})
 
 
 @app.get("/")
@@ -142,6 +151,7 @@ def precheck():
         started = time.time()
         if DEMO_ALERTS:
             g = local_guard(info, amt, d["ctx"], d["payload"], int((time.time() - started) * 1000))
+            g["bank"] = d.get("bank")
         else:
             g = ext.check(d["payload"], info, amt, d.get("note", ""), d["ctx"], d.get("src"))
             if "error" in g:
@@ -149,6 +159,7 @@ def precheck():
                 g = local_guard(info, amt, d["ctx"], d["payload"], int((time.time() - started) * 1000))
                 if g:
                     g["source"] = "local"
+                    g["bank"] = d.get("bank")
                 GLOG.append({"time": time.strftime("%H:%M:%S"), "ms": g["ms"] if g else 0, "ok": False,
                              "vpa": info["vpa"] or "-", "score": g["score"] if g else None,
                              "level": g["level"] if g else None})
@@ -166,6 +177,9 @@ def precheck():
                            "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}", "Context": f"{d['ctx']['device']}, {d['ctx']['city']}, {d['ctx']['hour']}:00"}
         GLOG.append({"time": time.strftime("%H:%M:%S"), "ms": g["ms"], "ok": True,
                      "vpa": info["vpa"] or "-", "score": g["score"], "level": g["level"]})
+        if g["blocked"]:
+            record_stopped_payment(info, amt, d.get("bank", ""), demo=g.get("source") == "demo")
+            g["auto_stopped"] = True
         PRE[g["id"]] = g
     return jsonify(info=info, guard=g, offline=ME["guard"] and g is None)
 
@@ -190,8 +204,13 @@ def pay():
     amt = float(d["amount"])
     fail = lambda code, msg, fatal=True: jsonify(ok=False, code=code, msg=msg, fatal=fatal)
     g = PRE.get(gid)
+    if DEMO_ALERTS and (not g or g.get("payload") != d["payload"] or g.get("amount") != amt
+                        or g.get("bank") != d["bank"]):
+        return fail("U16", "Run a fresh demo safety check before paying. Payment cancelled.")
     if g and (g["blocked"] or (g["needs_code"] and not g.get("ok"))):
-        return fail("U16", "PhishGuard did not approve this payment. Payment cancelled.")
+        return fail("U16", "High-risk check stopped this payment before PIN entry.")
+    if g and g.get("paid"):
+        return fail("U16", "This safety check was already used. Start a new payment.")
     if not info["vpa"]: return fail("U30", "Invalid payee. This QR does not contain a UPI address.")
     if d["pin"] != ME["upi_pin"]:
         ME["tries"] += 1
@@ -203,6 +222,7 @@ def pay():
     ME["tries"] = 0
     if amt > BANKS[d["bank"]]: return fail("Z9", "Insufficient funds in your account.")
     if spent() + amt > ME["limit"]: return fail("U30", "Daily UPI limit of Rs 1,00,000 exceeded.")
+    if g: g["paid"] = True
     BANKS[d["bank"]] -= amt
     t = {"id": len(HIST) + 1, "name": info["name"], "vpa": info["vpa"], "amount": amt, "bank": d["bank"],
          "utr": "".join(random.choices("0123456789", k=12)), "time": time.strftime("%d %b, %I:%M %p"),
@@ -216,12 +236,11 @@ def pay():
 def cancel():
     d = request.json
     info = resolve(d["payload"])
-    if d.get("gid"):
-        HIST.insert(0, {"id": len(HIST) + 1, "name": info["name"], "vpa": info["vpa"] or "unknown", "amount": float(d.get("amount") or 0),
-                        "bank": d.get("bank", ""), "utr": "-", "time": time.strftime("%d %b, %I:%M %p"),
-                        "status": "Stopped by demo alert" if DEMO_ALERTS else "Stopped by PhishGuard",
-                        "note": "Simulated demo warning" if DEMO_ALERTS else "U16 Risk threshold exceeded",
-                        "ts": time.time(), "dr": False})
+    g = PRE.get(d.get("gid"))
+    if g and not g.get("auto_stopped"):
+        record_stopped_payment(info, float(d.get("amount") or 0), d.get("bank", ""),
+                               demo=g.get("source") == "demo")
+        g["auto_stopped"] = True
     return jsonify(ok=True)
 
 
@@ -233,7 +252,7 @@ def decline():
 
 @app.post("/api/settings")
 def settings():
-    ME["guard"] = bool(request.json.get("guard"))
+    ME["guard"] = True if DEMO_ALERTS else bool(request.json.get("guard"))
     return jsonify(ok=True)
 
 
