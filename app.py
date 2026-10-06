@@ -1,4 +1,5 @@
 import os, time, random, statistics, requests
+import ipaddress
 from urllib.parse import urlparse, parse_qs, unquote
 from flask import Flask, jsonify, request, send_from_directory
 import extension_client as ext
@@ -39,31 +40,76 @@ def behavior(info, amt, ctx):
     return R
 
 
+def detect_url_risks(payload):
+    if not payload.lower().startswith(("http://", "https://")):
+        return [], False, None
+
+    try:
+        parsed = urlparse(payload)
+        host = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return [{"title": "Extra-high URL risk", "why": "The payment URL is malformed and its destination cannot be verified.", "w": 60}], True, None
+    reasons = [{"title": "Payment URL detected", "why": f"Review the payment website: {host or 'unknown host'}.", "w": 10}]
+    indicators = []
+    if parsed.scheme.lower() != "https":
+        indicators.append("The link does not use secure HTTPS.")
+    if parsed.username or parsed.password:
+        indicators.append("The link hides its destination behind user information.")
+    if host.startswith("xn--") or any(label.startswith("xn--") for label in host.split(".")):
+        indicators.append("The website uses an internationalized domain that may imitate another address.")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        indicators.append("The website uses a raw IP address instead of a normal domain.")
+
+    suspicious_terms = ("kyc", "verify", "refund", "reward", "claim", "secure", "bank", "upi", "login", "support")
+    matched_terms = [term for term in suspicious_terms if term in host]
+    if matched_terms:
+        indicators.append(f"The domain contains a sensitive-payment term: {', '.join(matched_terms[:3])}.")
+    if len(host.split(".")) > 4:
+        indicators.append("The website uses an unusually nested domain.")
+
+    extra_high = bool(parsed.username or parsed.password or host.startswith("xn--")
+                      or any(label.startswith("xn--") for label in host.split("."))
+                      or matched_terms or len(host.split(".")) > 4)
+    if indicators:
+        reasons.append({"title": "Extra-high URL risk" if extra_high else "URL security concern",
+                        "why": " ".join(indicators), "w": 60 if extra_high else 30})
+    return reasons, extra_high, host or None
+
+
 def local_guard(info, amt, ctx, payload, elapsed_ms):
     reasons = [{"title": "Demo safety alert", "why": "This simulated warning demonstrates the review flow; it is not a real fraud assessment.", "w": 25}]
     reasons.extend(behavior(info, amt, ctx))
-    if payload.lower().startswith("http://"):
-        reasons.append({"title": "Payment uses an insecure web link",
-                        "why": "This payment link does not use a secure HTTPS connection.", "w": 35})
+    url_reasons, extra_high, url_host = detect_url_risks(payload)
+    reasons.extend(url_reasons)
     reasons.sort(key=lambda reason: -reason["w"])
     score = min(100, sum(reason["w"] for reason in reasons))
+    if extra_high:
+        score = max(score, 90)
     gid = f"local-{time.time_ns()}"
-    return {"id": gid, "ref": None, "score": score, "ms": elapsed_ms, "blocked": score >= 55,
-            "needs_code": False, "level": "high" if score >= 55 else "medium" if score >= 25 else "low",
+    return {"id": gid, "ref": None, "score": score, "ms": elapsed_ms, "blocked": extra_high or score >= 55,
+            "needs_code": False, "level": "extra-high" if extra_high else "high" if score >= 55 else "medium" if score >= 25 else "low",
             "reasons": reasons, "source": "demo" if DEMO_ALERTS else "local",
             "payload": payload, "amount": amt, "auto_stopped": False,
             "verify": {"Recipient ID": info["vpa"] or "None",
                        "Registered name": info["registered"] or "Not verified by bank",
                        "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}",
-                       "Context": f"{ctx['device']}, {ctx['city']}, {ctx['hour']}:00"}}
+                       "Context": f"{ctx['device']}, {ctx['city']}, {ctx['hour']}:00",
+                       **({"Payment URL host": url_host} if url_host else {})}}
 
 
 def resolve(t):
     t = (t or "").strip()
     info = {"vpa": None, "name": None, "amount": None}
     if t.lower().startswith(("upi://", "http")):
-        q = {k: unquote(v[0]) for k, v in parse_qs(urlparse(t).query).items()}
-        info.update(vpa=q.get("pa", "").lower() or None, name=q.get("pn"), amount=q.get("am"))
+        try:
+            q = {k: unquote(v[0]) for k, v in parse_qs(urlparse(t).query).items()}
+            info.update(vpa=q.get("pa", "").lower() or None, name=q.get("pn"), amount=q.get("am"))
+        except ValueError:
+            info["name"] = "Unverifiable payment URL"
     elif t.isdigit() and len(t) == 10:
         info["vpa"] = t + "@ybl"
     else:
@@ -169,12 +215,19 @@ def precheck():
             seen = {r["title"] for r in g["reasons"]}
             extra = [r for r in behavior(info, amt, d["ctx"]) if r["title"] not in seen]
             g["reasons"] += extra
+            url_reasons, extra_high, url_host = detect_url_risks(d["payload"])
+            seen.update(r["title"] for r in g["reasons"])
+            g["reasons"] += [r for r in url_reasons if r["title"] not in seen]
             g["reasons"].sort(key=lambda r: -r["w"])
-            g["score"] = min(100, g["score"] + sum(r["w"] for r in extra))
+            g["score"] = min(100, g["score"] + sum(r["w"] for r in extra) + sum(r["w"] for r in url_reasons))
+            if extra_high:
+                g["score"] = max(g["score"], 90)
+                g["blocked"] = True
             g["blocked"] = g["blocked"] or (g["score"] >= 55 and not g["needs_code"])
-            g["level"] = "high" if g["score"] >= 55 else "medium" if g["needs_code"] or g["score"] >= 25 else "low"
+            g["level"] = "extra-high" if extra_high else "high" if g["score"] >= 55 else "medium" if g["needs_code"] or g["score"] >= 25 else "low"
             g["verify"] = {"Recipient ID": info["vpa"] or "None", "Registered name": info["registered"] or "Not verified by bank",
-                           "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}", "Context": f"{d['ctx']['device']}, {d['ctx']['city']}, {d['ctx']['hour']}:00"}
+                           "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}", "Context": f"{d['ctx']['device']}, {d['ctx']['city']}, {d['ctx']['hour']}:00",
+                           **({"Payment URL host": url_host} if url_host else {})}
         GLOG.append({"time": time.strftime("%H:%M:%S"), "ms": g["ms"], "ok": True,
                      "vpa": info["vpa"] or "-", "score": g["score"], "level": g["level"]})
         if g["blocked"]:
