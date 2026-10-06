@@ -1,4 +1,4 @@
-const CACHE = "zippay-demo-v3";
+const CACHE = "zippay-demo-v4";
 const APP_SHELL = ["/", "/manifest.json", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", event => {

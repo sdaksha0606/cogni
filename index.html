@@ -156,7 +156,7 @@ input:focus,select:focus{outline:0;border-color:#7aa0f7;box-shadow:0 0 0 3px #24
 <aside class="mon" id="mon"></aside></div>
 <script>
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),inr=n=>'₹'+Number(n).toLocaleString('en-IN');
-const api=(u,b)=>fetch(u,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:{}).then(r=>r.json());
+const api=async(u,b)=>{const r=await fetch(u,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:{});let data;try{data=await r.json()}catch{throw new Error(`The server returned an invalid response (${r.status}).`)}if(!r.ok)throw new Error(data.msg||data.error||`Request failed (${r.status}).`);return data};
 const QR={dmart:['upi://pay?pa=dmart@okicici&pn=DMart Avenue Supermarts&am=640','DMart store'],fake:['upi://pay?pa=dmart-help@okxyz&pn=DMart Avenue Supermarts&am=18500','Fake DMart QR'],link:['http://sbi-kyc-verify.top/pay?pa=rewards@paytmx&pn=SBI Rewards&am=4999','QR with web link'],look:['upi://pay?pa=tneb.biils@sbi&pn=TNEB Electricity Board&am=3200','TNEB bill QR'],shop:['upi://pay?pa=sharma.store@okaxis&pn=Sharma General Store&am=1200','Sharma store']};
 let S={v:'lock',pin:'',f:{},bal:null,ctx:{device:'Pixel 7',city:'Chennai',hour:new Date().getHours()}};
 const go=v=>{S.v=v;S.pin='';draw()};
@@ -203,16 +203,17 @@ return `<div class="hd"><button class="back" onclick="go('scan')">← Back</butt
 <div style="padding:0 14px"><button class="btn" onclick="check()">Proceed to pay</button></div>`}
 async function check(){const f=S.f;f.amt=$('#amt').value;f.note=$('#note').value;f.bank=$('#bank').value;delete f.code;
 $('#ov').className='on chk';$('#ov').innerHTML='<div class="spin"></div><b>PhishGuard is checking this payment…</b><small>QR, UPI ID, merchant, amount, and your usual pattern</small>';
-const [r]=await Promise.all([api('/api/precheck',{payload:f.p,amount:f.amt,bank:f.bank,src:f.src,ctx:S.ctx}),new Promise(z=>setTimeout(z,900))]);
+try{const [r]=await Promise.all([api('/api/precheck',{payload:f.p,amount:f.amt,bank:f.bank,src:f.src,ctx:S.ctx}),new Promise(z=>setTimeout(z,900))]);
 if(r.err){$('#ov').className='';return toast(r.err)}f.g=r.guard;f.off=r.offline;if(r.msg)toast('PhishGuard unreachable: '+r.msg);
 if(!r.guard||r.guard.level==='low'){$('#ov').className='';return go('pin')}alertUI(r.guard)}
+catch(error){console.error('Payment safety pre-check failed:',error);$('#ov').className='';toast(error.message||'The safety check failed. Please try again.')}}
 const li=r=>`<li><b>${esc(r.title)}</b><span>${esc(r.why)}</span><i style="width:${Math.min(100,r.w*3)}%"></i></li>`;
 const vt=v=>'<table>'+Object.entries(v).map(([k,x])=>`<tr><td>${k}</td><td>${esc(x)}</td></tr>`).join('')+'</table>';
 function alarm(hi){if(navigator.vibrate)navigator.vibrate(hi?[120,70,120]:[80])}
 function alertUI(g){const hi=g.level==='high';$('#ov').className='on '+(hi?'hi':'md');
 $('#ov').innerHTML=`<div class="card2" role="dialog" aria-modal="true" aria-labelledby="risk-title"><div class="bar" id="risk-title">${hi?'Payment paused · High risk':'A quick safety check'}</div><div class="row" style="justify-content:flex-start;gap:14px">${ring(g.score)}<div><h2>${g.score}<small style="font-size:15px;color:var(--m)"> / 100 risk</small></h2><p>${hi?'We recommend cancelling this payment.':'Review the details before continuing.'}</p></div></div>
 <p style="font-weight:700;margin-top:14px">What we noticed</p><ul class="rs">${g.reasons.slice(0,4).map(li).join('')}</ul>${vt(g.verify)}
-${g.blocked?'<p style="margin:12px 0;font-weight:700">PhishGuard blocked this payment.</p>':g.needs_code?`<div class="sms">PhishGuard needs one more check. Enter the 6-digit code it sent you.</div><input id="cd" inputmode="numeric" maxlength="6" placeholder="Enter 6-digit code">`:`<label class="ck"><input type="checkbox" id="ck"> I checked the merchant name and ID</label>`}
+${g.source==='local'?'<div class="sms">PhishGuard is offline. This warning is based on local demo checks.</div>':''}${g.blocked?'<p style="margin:12px 0;font-weight:700">PhishGuard blocked this payment.</p>':g.needs_code?`<div class="sms">PhishGuard needs one more check. Enter the 6-digit code it sent you.</div><input id="cd" inputmode="numeric" maxlength="6" placeholder="Enter 6-digit code">`:`<label class="ck"><input type="checkbox" id="ck"> I checked the merchant name and ID</label>`}
 <div style="display:grid;gap:10px;margin-top:12px"><button class="btn y" onclick="stop()">Cancel and keep money safe</button>${g.blocked?'':`<button class="btn o" onclick="cont()">${g.needs_code?'Verify and continue':'I understand · Continue'}</button>`}</div><p class="er" id="er2" style="color:var(--y)"></p></div>`;alarm(hi)}
 async function cont(){const g=S.f.g;if(!g.needs_code&&!$('#ck').checked)return $('#er2').textContent='Tick the box after checking the merchant.';
 if(g.needs_code){S.f.code=$('#cd').value;const x=await api('/api/gverify',{gid:g.id,code:S.f.code,payload:S.f.p,amount:S.f.amt});if(!x.ok)return $('#er2').textContent=x.msg||'Wrong code. The payment stays paused.'}$('#ov').className='';go('pin')}

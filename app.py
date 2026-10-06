@@ -38,6 +38,25 @@ def behavior(info, amt, ctx):
     return R
 
 
+def local_guard(info, amt, ctx, payload, elapsed_ms):
+    reasons = behavior(info, amt, ctx)
+    if payload.lower().startswith("http://"):
+        reasons.append({"title": "Payment uses an insecure web link",
+                        "why": "This payment link does not use a secure HTTPS connection.", "w": 35})
+    if not reasons:
+        return None
+    reasons.sort(key=lambda reason: -reason["w"])
+    score = min(100, sum(reason["w"] for reason in reasons))
+    gid = f"local-{time.time_ns()}"
+    return {"id": gid, "ref": None, "score": score, "ms": elapsed_ms, "blocked": score >= 55,
+            "needs_code": False, "level": "high" if score >= 55 else "medium" if score >= 25 else "low",
+            "reasons": reasons, "source": "local",
+            "verify": {"Recipient ID": info["vpa"] or "None",
+                       "Registered name": info["registered"] or "Not verified by bank",
+                       "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}",
+                       "Context": f"{ctx['device']}, {ctx['city']}, {ctx['hour']}:00"}}
+
+
 def resolve(t):
     t = (t or "").strip()
     info = {"vpa": None, "name": None, "amount": None}
@@ -120,10 +139,17 @@ def precheck():
     if amt <= 0: return jsonify(err="Enter a valid amount.")
     g = None
     if ME["guard"]:
+        started = time.time()
         g = ext.check(d["payload"], info, amt, d.get("note", ""), d["ctx"], d.get("src"))
         GLOG.append({"time": time.strftime("%H:%M:%S"), "ms": g["ms"], "ok": "error" not in g, "vpa": info["vpa"] or "-",
                      "score": g.get("score"), "level": None})
-        if "error" in g: return jsonify(info=info, guard=None, offline=True, msg=g["error"])
+        if "error" in g:
+            error = g["error"]
+            g = local_guard(info, amt, d["ctx"], d["payload"], int((time.time() - started) * 1000))
+            if g:
+                PRE[g["id"]] = g
+                GLOG[-1].update(score=g["score"], level=g["level"])
+            return jsonify(info=info, guard=g, offline=True, msg=error)
         seen = {r["title"] for r in g["reasons"]}
         extra = [r for r in behavior(info, amt, d["ctx"]) if r["title"] not in seen]
         g["reasons"] += extra
