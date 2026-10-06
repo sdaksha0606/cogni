@@ -84,6 +84,16 @@ input:focus,select:focus{outline:0;border-color:#7aa0f7;box-shadow:0 0 0 3px #24
 .nv .on:after{content:"";position:absolute;left:35%;right:35%;bottom:5px;height:3px;border-radius:3px;background:var(--b)}
 .vf{height:190px;background:radial-gradient(circle at 50% 45%,#2c3c5e,#172033 68%);overflow:hidden}
 .vf span{animation:scan 2.5s ease-in-out infinite;box-shadow:0 0 14px #f4bd32}
+.camera-box{height:250px;display:grid;place-items:center;color:#fff}
+.camera-box video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none}
+.camera-box.live video{display:block}
+.camera-box:not(.live):before,.camera-box:not(.live):after,.camera-box:not(.live)>span{display:none}
+.camera-box.live:before,.camera-box.live:after{z-index:1}
+.camera-box .scan-frame{display:none;position:absolute;z-index:1;width:min(62vw,220px);height:min(62vw,220px);border:2px solid var(--y);border-radius:18px;box-shadow:0 0 0 999px #10182755}
+.camera-box.live .scan-frame{display:block}
+.camera-box .camera-status{z-index:2;align-self:end;margin:0 12px 14px;padding:6px 10px;border-radius:99px;background:#101827cc;color:#fff;font-size:12px;text-align:center}
+.camera-controls{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 14px}
+.camera-controls .btn[hidden]{display:none}
 #ov{background:rgba(17,27,45,.55);backdrop-filter:blur(7px);padding:18px;display:none;align-items:center;justify-content:center}
 #ov.on{display:flex}
 #ov.on.chk{background:rgba(17,27,45,.56);gap:14px}
@@ -161,7 +171,9 @@ const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>(
 const api=async(u,b)=>{const r=await fetch(u,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:{});let data;try{data=await r.json()}catch{throw new Error(`The server returned an invalid response (${r.status}).`)}if(!r.ok)throw new Error(data.msg||data.error||`Request failed (${r.status}).`);return data};
 const QR={dmart:['upi://pay?pa=dmart@okicici&pn=DMart Avenue Supermarts&am=640','DMart store'],fake:['upi://pay?pa=dmart-help@okxyz&pn=DMart Avenue Supermarts&am=18500','Fake DMart QR'],link:['http://sbi-kyc-verify.top/pay?pa=rewards@paytmx&pn=SBI Rewards&am=4999','QR with web link'],look:['upi://pay?pa=tneb.biils@sbi&pn=TNEB Electricity Board&am=3200','TNEB bill QR'],shop:['upi://pay?pa=sharma.store@okaxis&pn=Sharma General Store&am=1200','Sharma store']};
 let S={v:'lock',pin:'',f:{},bal:null,ctx:{device:'Pixel 7',city:'Chennai',hour:new Date().getHours()}};
-const go=v=>{S.v=v;S.pin='';draw()};
+const qrCamera={stream:null,timer:null,detector:null,reading:false};
+let qrDecoderPromise=null;
+const go=v=>{if(v!=='scan')stopCamera();S.v=v;S.pin='';draw()};
 function toast(m){const t=$('#t');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2800)}
 const load=async()=>S.me=await api('/api/me');
 const dots=()=>`<div class="dots">${[0,1,2,3].map(i=>`<i class="${i<S.pin.length?'f':''}"></i>`).join('')}</div>`;
@@ -194,10 +206,22 @@ ${S.bal?`<div class="card"><h3>Account balances</h3>${Object.entries(S.bal).map(
 ${st?`<div class="card" style="background:var(--y)"><b>${m.guard.demo?'Demo alerts automatically stopped':'PhishGuard stopped'} ${st} payment${st>1?'s':''} for review.</b></div>`:''}
 <div class="card"><h3>Recent transactions</h3>${txs(m.hist.slice(0,4))}</div>`}
 function txs(a){return a.map(h=>`<div class="li"><div class="av" style="background:${h.dr?'var(--b)':'var(--ink)'}">${init(h.name)}</div><div><b>${esc(h.name)}</b><small>${esc(h.time)}${h.utr!=='-'?' · UTR '+h.utr:''}</small></div><div style="text-align:right"><b>${h.dr?'-':''}${inr(h.amount)}</b><br><span class="pill ${h.dr?'':'s'}">${h.status}</span></div></div>`).join('')||'<small>No transactions yet.</small>'}
-function scan(){return `<div class="hd"><button class="back" onclick="go('home')">← Back</button><h2>Scan QR or pay</h2></div><div class="vf"><span></span></div>
+function scan(){return `<div class="hd"><button class="back" onclick="go('home')">← Back</button><h2>Scan QR or pay</h2></div>
+<div class="vf camera-box" id="cameraBox"><video id="qrVideo" autoplay playsinline muted></video><div class="scan-frame"></div><span></span><p class="camera-status" id="cameraStatus">Start the camera and point it at a UPI QR code</p></div>
+<div class="camera-controls"><button class="btn" id="cameraStart" onclick="startCamera()">Open camera</button><button class="btn g" id="cameraStop" onclick="stopCamera()" hidden>Stop camera</button></div>
+<p style="text-align:center;color:var(--m);font-size:12px;margin:9px 18px">Camera scanning needs permission and HTTPS (or localhost). Some browsers load a QR decoder from the internet when needed.</p>
 <div class="card"><h3>Try a demo QR</h3><div class="chips">${Object.entries(QR).map(([k,v])=>`<button onclick="start(QR.${k}[0],'qr')">${v[1]}</button>`).join('')}</div></div>
 <div class="card"><h3>Or enter UPI ID, mobile number, or paste QR text</h3><input id="to" placeholder="name@bank or 9876543210"><button class="btn" style="margin-top:10px" onclick="start($('#to').value,'typed')">Continue</button></div>`}
-async function start(p,src,cid){const info=await api('/api/resolve',{payload:p});S.f={p,src,cid,info,bank:S.me.banks[0],amt:info.amount||'',note:''};go('amt')}
+function stopCamera(){if(qrCamera.timer){clearInterval(qrCamera.timer);qrCamera.timer=null}if(qrCamera.stream){qrCamera.stream.getTracks().forEach(track=>track.stop());qrCamera.stream=null}qrCamera.detector=null;qrCamera.reading=false;const video=$('#qrVideo'),box=$('#cameraBox'),startButton=$('#cameraStart'),stopButton=$('#cameraStop');if(video)video.srcObject=null;if(box)box.classList.remove('live');if(startButton)startButton.hidden=false;if(stopButton)stopButton.hidden=true}
+function loadQrDecoder(){if(window.jsQR)return Promise.resolve(window.jsQR);if(!qrDecoderPromise)qrDecoderPromise=new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';script.onload=()=>window.jsQR?resolve(window.jsQR):reject(new Error('QR decoder did not load.'));script.onerror=()=>reject(new Error('Could not load the QR decoder. Check your internet connection and try again.'));document.head.appendChild(script)});return qrDecoderPromise}
+async function startCamera(){const status=$('#cameraStatus');if(!window.isSecureContext){status.textContent='Camera needs HTTPS. Open the secure Render URL.';return}
+if(!navigator.mediaDevices?.getUserMedia){status.textContent='Camera access is unavailable in this browser.';return}
+try{if('BarcodeDetector' in window)qrCamera.detector=new BarcodeDetector({formats:['qr_code']});else{status.textContent='Loading QR decoder…';qrCamera.decoder=await loadQrDecoder()}const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'}}});if(S.v!=='scan'){stream.getTracks().forEach(track=>track.stop());return}
+const video=$('#qrVideo');qrCamera.stream=stream;video.srcObject=stream;await video.play();$('#cameraBox').classList.add('live');$('#cameraStart').hidden=true;$('#cameraStop').hidden=false;status.textContent='Scanning… hold the QR code inside the frame';
+const canvas=document.createElement('canvas'),context=canvas.getContext('2d',{willReadFrequently:true});
+qrCamera.timer=setInterval(async()=>{if(qrCamera.reading||(!qrCamera.detector&&!qrCamera.decoder)||!video.videoWidth)return;qrCamera.reading=true;try{let value;if(qrCamera.detector){const codes=await qrCamera.detector.detect(video);value=codes.find(code=>code.rawValue)?.rawValue}else{const scale=Math.min(1,640/video.videoWidth),width=Math.round(video.videoWidth*scale),height=Math.round(video.videoHeight*scale);canvas.width=width;canvas.height=height;context.drawImage(video,0,0,width,height);const image=context.getImageData(0,0,width,height),code=qrCamera.decoder(image.data,width,height,{inversionAttempts:'dontInvert'});value=code?.data}if(value){stopCamera();toast('QR code detected. Reviewing payment details…');await start(value,'camera')}}catch(error){console.error('QR scan failed:',error);status.textContent='Could not read this QR. Adjust the camera and try again.'}finally{qrCamera.reading=false}},300)
+}catch(error){stopCamera();if(!window.jsQR)qrDecoderPromise=null;const message=error.name==='NotAllowedError'?'Camera permission was denied. Allow camera access in your browser settings.':error.name==='NotFoundError'?'No camera was found on this device.':error.name==='NotReadableError'?'The camera is already in use by another app.':`Could not start the camera: ${error.message}`;if(status)status.textContent=message;console.error('Could not start QR camera:',error)}}
+async function start(p,src,cid){stopCamera();const info=await api('/api/resolve',{payload:p});S.f={p,src,cid,info,bank:S.me.banks[0],amt:info.amount||'',note:''};go('amt')}
 function amt(){const f=S.f,i=f.info,ok=i.registered&&i.name.toLowerCase().includes(i.registered.split(' ')[0].toLowerCase());
 return `<div class="hd"><button class="back" onclick="go('scan')">← Back</button><div class="row" style="justify-content:flex-start"><div class="av" style="background:#fff;color:var(--b)">${init(i.name)}</div><div><h2 style="font-size:18px">${esc(i.name)}</h2><small>${esc(i.vpa||'No UPI ID in this code')}</small></div></div></div>
 <div class="card"><small style="color:var(--m)">Banking name</small><div><b>${esc(i.registered||'Not verified')}</b> <span class="pill ${i.registered?'':'s'}">${i.registered?'Verified by bank':'Unverified'}</span></div></div>
@@ -239,6 +263,7 @@ $('#scr').innerHTML=V[v]();const show=['home','hist','req','prof'].includes(v);$
 if(show)$('#nv').innerHTML=[['home','Home'],['hist','History'],['scan','Scan'],['req','Requests'],['prof','Profile']].map(([k,l])=>`<button class="${v===k?'on':''}" onclick="go('${k}')">${l}${k==='req'&&m.collect.length?`<b>${m.collect.length}</b>`:''}</button>`).join('');mon()}
 async function mon(){const g=await api('/api/guardlog');$('#mon').innerHTML=`<h3>${g.demo?'Demo safety alerts':'PhishGuard extension'}</h3><p style="color:var(--m);margin:6px 0 12px;font-size:13px">${g.demo?'Simulated locally for every payment option. These are not real fraud checks.':'The PhishGuard service behind the app-debug.apk. Zippay calls it before every payment.'}</p><span class="shield ${g.online?'':'off'}">${g.demo?'Simulation active':g.online?'Connected':'Offline'}</span><div style="margin-top:12px">${g.log.map(l=>`<div class="li"><div><b>${esc(l.vpa)}</b><small>${l.time} · ${l.ms} ms</small></div><b>${l.score??'-'}</b></div>`).join('')||'<small style="color:var(--m)">No checks yet.</small>'}</div>`}
 window.addEventListener('appinstalled',()=>{installPrompt=null;toast('Zippay was added to your device.')});
+window.addEventListener('pagehide',stopCamera);
 if('serviceWorker' in navigator)navigator.serviceWorker.register('/service-worker.js').catch(error=>console.error('Could not register the app service worker:',error));
 draw();setInterval(mon,4000);
 </script></body></html>
