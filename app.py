@@ -4,6 +4,7 @@ from flask import Flask, jsonify, request, send_from_directory
 import extension_client as ext
 
 app = Flask(__name__)
+DEMO_ALERTS = os.getenv("DEMO_ALERTS", "1") == "1"
 ME = {"name": "Arjun Kumar", "mobile": "98765 43210", "vpa": "arjun@oksbi", "app_pin": "2580",
       "upi_pin": "1234", "limit": 100000, "guard": True, "tries": 0}
 BANKS = {"SBI ••1234": 48250.0, "HDFC ••5678": 12600.0}
@@ -39,18 +40,17 @@ def behavior(info, amt, ctx):
 
 
 def local_guard(info, amt, ctx, payload, elapsed_ms):
-    reasons = behavior(info, amt, ctx)
+    reasons = [{"title": "Demo safety alert", "why": "This simulated warning demonstrates the review flow; it is not a real fraud assessment.", "w": 25}]
+    reasons.extend(behavior(info, amt, ctx))
     if payload.lower().startswith("http://"):
         reasons.append({"title": "Payment uses an insecure web link",
                         "why": "This payment link does not use a secure HTTPS connection.", "w": 35})
-    if not reasons:
-        return None
     reasons.sort(key=lambda reason: -reason["w"])
     score = min(100, sum(reason["w"] for reason in reasons))
     gid = f"local-{time.time_ns()}"
     return {"id": gid, "ref": None, "score": score, "ms": elapsed_ms, "blocked": score >= 55,
             "needs_code": False, "level": "high" if score >= 55 else "medium" if score >= 25 else "low",
-            "reasons": reasons, "source": "local",
+            "reasons": reasons, "source": "demo" if DEMO_ALERTS else "local",
             "verify": {"Recipient ID": info["vpa"] or "None",
                        "Registered name": info["registered"] or "Not verified by bank",
                        "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}",
@@ -116,7 +116,7 @@ def login():
 def me():
     return jsonify(name=ME["name"], vpa=ME["vpa"], mobile=ME["mobile"], contacts=CONTACTS, banks=list(BANKS),
                    hist=HIST[:30], collect=COLLECT, limit=ME["limit"], spent=int(spent()),
-                   guard={"on": ME["guard"], "online": ext.online()})
+                   guard={"on": ME["guard"], "online": True if DEMO_ALERTS else ext.online(), "demo": DEMO_ALERTS})
 
 
 @app.post("/api/balance")
@@ -140,26 +140,32 @@ def precheck():
     g = None
     if ME["guard"]:
         started = time.time()
-        g = ext.check(d["payload"], info, amt, d.get("note", ""), d["ctx"], d.get("src"))
-        GLOG.append({"time": time.strftime("%H:%M:%S"), "ms": g["ms"], "ok": "error" not in g, "vpa": info["vpa"] or "-",
-                     "score": g.get("score"), "level": None})
-        if "error" in g:
-            error = g["error"]
+        if DEMO_ALERTS:
             g = local_guard(info, amt, d["ctx"], d["payload"], int((time.time() - started) * 1000))
-            if g:
-                PRE[g["id"]] = g
-                GLOG[-1].update(score=g["score"], level=g["level"])
-            return jsonify(info=info, guard=g, offline=True, msg=error)
-        seen = {r["title"] for r in g["reasons"]}
-        extra = [r for r in behavior(info, amt, d["ctx"]) if r["title"] not in seen]
-        g["reasons"] += extra
-        g["reasons"].sort(key=lambda r: -r["w"])
-        g["score"] = min(100, g["score"] + sum(r["w"] for r in extra))
-        g["blocked"] = g["blocked"] or (g["score"] >= 55 and not g["needs_code"])
-        g["level"] = "high" if g["score"] >= 55 else "medium" if g["needs_code"] or g["score"] >= 25 else "low"
-        GLOG[-1]["level"] = g["level"]
-        g["verify"] = {"Recipient ID": info["vpa"] or "None", "Registered name": info["registered"] or "Not verified by bank",
-                       "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}", "Context": f"{d['ctx']['device']}, {d['ctx']['city']}, {d['ctx']['hour']}:00"}
+        else:
+            g = ext.check(d["payload"], info, amt, d.get("note", ""), d["ctx"], d.get("src"))
+            if "error" in g:
+                error = g["error"]
+                g = local_guard(info, amt, d["ctx"], d["payload"], int((time.time() - started) * 1000))
+                if g:
+                    g["source"] = "local"
+                GLOG.append({"time": time.strftime("%H:%M:%S"), "ms": g["ms"] if g else 0, "ok": False,
+                             "vpa": info["vpa"] or "-", "score": g["score"] if g else None,
+                             "level": g["level"] if g else None})
+                if g:
+                    PRE[g["id"]] = g
+                return jsonify(info=info, guard=g, offline=True, msg=error)
+            seen = {r["title"] for r in g["reasons"]}
+            extra = [r for r in behavior(info, amt, d["ctx"]) if r["title"] not in seen]
+            g["reasons"] += extra
+            g["reasons"].sort(key=lambda r: -r["w"])
+            g["score"] = min(100, g["score"] + sum(r["w"] for r in extra))
+            g["blocked"] = g["blocked"] or (g["score"] >= 55 and not g["needs_code"])
+            g["level"] = "high" if g["score"] >= 55 else "medium" if g["needs_code"] or g["score"] >= 25 else "low"
+            g["verify"] = {"Recipient ID": info["vpa"] or "None", "Registered name": info["registered"] or "Not verified by bank",
+                           "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}", "Context": f"{d['ctx']['device']}, {d['ctx']['city']}, {d['ctx']['hour']}:00"}
+        GLOG.append({"time": time.strftime("%H:%M:%S"), "ms": g["ms"], "ok": True,
+                     "vpa": info["vpa"] or "-", "score": g["score"], "level": g["level"]})
         PRE[g["id"]] = g
     return jsonify(info=info, guard=g, offline=ME["guard"] and g is None)
 
@@ -213,7 +219,9 @@ def cancel():
     if d.get("gid"):
         HIST.insert(0, {"id": len(HIST) + 1, "name": info["name"], "vpa": info["vpa"] or "unknown", "amount": float(d.get("amount") or 0),
                         "bank": d.get("bank", ""), "utr": "-", "time": time.strftime("%d %b, %I:%M %p"),
-                        "status": "Stopped by PhishGuard", "note": "U16 Risk threshold exceeded", "ts": time.time(), "dr": False})
+                        "status": "Stopped by demo alert" if DEMO_ALERTS else "Stopped by PhishGuard",
+                        "note": "Simulated demo warning" if DEMO_ALERTS else "U16 Risk threshold exceeded",
+                        "ts": time.time(), "dr": False})
     return jsonify(ok=True)
 
 
@@ -239,7 +247,8 @@ def report():
 
 @app.get("/api/guardlog")
 def guardlog():
-    return jsonify(online=ext.online(), log=GLOG[-8:][::-1], url=ext.BASE)
+    return jsonify(online=True if DEMO_ALERTS else ext.online(), demo=DEMO_ALERTS,
+                   log=GLOG[-8:][::-1], url=ext.BASE)
 
 
 if __name__ == "__main__":
