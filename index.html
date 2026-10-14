@@ -163,6 +163,68 @@ input:focus,select:focus{outline:0;border-color:#7aa0f7;box-shadow:0 0 0 3px #24
  #ov .bar{padding:16px;font-size:16px}
 }
 @media(prefers-reduced-motion:reduce){ #scr>*{animation:none}}
+
+/* ===== Floaty, airy skin (same blue / yellow palette) ===== */
+:root{--bg:#f3f7ff;--sky:#dfeaff;--ease:cubic-bezier(.22,1,.36,1)}
+body{background:linear-gradient(180deg,#f6f9ff,#eef3ff 55%,#fff8e6);background-attachment:fixed}
+body:before,body:after{content:"";position:fixed;z-index:0;border-radius:50%;filter:blur(60px);opacity:.55;pointer-events:none;animation:drift 16s ease-in-out infinite}
+body:before{width:380px;height:380px;left:-90px;top:-70px;background:#bcd3ff}
+body:after{width:340px;height:340px;right:-80px;bottom:-60px;background:#ffe39a;animation-delay:-8s}
+.wrap{position:relative;z-index:1}
+.ph{background:rgba(255,255,255,.55);backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.8);box-shadow:0 30px 80px rgba(36,95,232,.14);border-radius:30px}
+.hd{position:relative;overflow:hidden;border-radius:0 0 34px 34px;padding:28px 24px 38px;background:linear-gradient(150deg,#245fe8,#4a8bff)}
+.hd:before,.hd:after{content:"";position:absolute;border-radius:50%;background:rgba(255,255,255,.14);animation:bob 7s ease-in-out infinite}
+.hd:before{width:150px;height:150px;right:-30px;top:-50px}.hd:after{width:90px;height:90px;left:40%;bottom:-40px;background:rgba(244,189,50,.35);animation-delay:-3s}
+.hd>*{position:relative;z-index:1}
+.card{border:0;border-radius:26px;padding:20px;margin:18px 16px;background:rgba(255,255,255,.82);box-shadow:0 14px 40px rgba(36,95,232,.09);animation:float 7s ease-in-out infinite}
+.card:nth-child(even){animation-delay:-3.5s}
+.card h3{text-transform:none;letter-spacing:0;font-size:14px;color:#5d6e8c}
+.grid i{width:56px;height:56px;border:0;background:linear-gradient(145deg,#fff,#e4edff);box-shadow:0 8px 18px rgba(36,95,232,.16)}
+.btn{border-radius:18px;padding:16px;background:linear-gradient(135deg,#245fe8,#4a8bff);box-shadow:0 12px 26px rgba(36,95,232,.28)}
+.btn.y{background:linear-gradient(135deg,#f4bd32,#ffd76a);box-shadow:0 10px 22px rgba(244,189,50,.35)}.btn.g{background:#e8eefb;box-shadow:none}
+.btn:hover{transform:translateY(-3px)}
+input,select{border-radius:16px;border-color:#e1e8f6;background:rgba(255,255,255,.9)}
+.nv{margin:0 14px calc(12px + env(safe-area-inset-bottom));border:0;border-radius:24px;background:rgba(255,255,255,.88);box-shadow:0 14px 36px rgba(36,95,232,.16);padding-bottom:0}
+.nv button{padding:14px 0}
+.pad button{border-radius:20px;background:rgba(255,255,255,.9);box-shadow:0 6px 16px rgba(36,95,232,.08);transition:transform .15s var(--ease)}.pad button:active{transform:scale(.92)}
+.dots i{transition:transform .2s var(--ease),background .2s}.dots i.f{transform:scale(1.25)}
+.mon{border-radius:28px!important;background:rgba(255,255,255,.8)}
+@media(min-width:900px){.nv{order:-1;margin:12px 16px 0}}
+/* play-money wallet */
+.wal{background:linear-gradient(140deg,#fff,#eaf1ff 60%,#fff3cf);position:relative;overflow:hidden}
+.wal:before{content:"₹";position:absolute;right:-8px;top:-30px;font:800 150px/1 sans-serif;color:rgba(36,95,232,.06)}
+.wal .big{font-size:36px;font-weight:800;letter-spacing:-.03em;color:var(--b2)}
+.wal .tag{display:inline-block;background:var(--y);border-radius:99px;font-size:11px;font-weight:700;padding:3px 10px;margin-left:6px;color:var(--ink)}
+.wal button.rs{background:none;border:0;color:var(--b);font-weight:600;font-size:12px;cursor:pointer;padding:6px 0 0}
+/* transfer scene */
+#ov.xfer{background:linear-gradient(160deg,rgba(36,95,232,.93),rgba(74,139,255,.9));flex-direction:column;color:#fff;text-align:center}
+.xf{width:min(100%,520px)}
+.xf h2{color:#fff!important;font-size:22px!important;margin-bottom:4px}
+.xrow{display:grid;grid-template-columns:1fr 70px 1fr;align-items:center;margin:26px 0 18px;position:relative}
+.bk{background:#fff;color:var(--ink);border-radius:24px;padding:16px 10px;box-shadow:0 18px 40px rgba(8,25,70,.3);animation:float 4s ease-in-out infinite}
+.bk+.lane+.bk{animation-delay:-2s}
+.bk small{display:block;color:var(--m);font-size:11px}.bk b{display:block;font-size:13px;margin:2px 0}.bk .n{font-size:20px;font-weight:800;color:var(--b2);margin-top:8px}
+.bk.gain{animation:pop .5s var(--ease)}.bk.gain .n{color:#12915a}
+.lane{position:relative;height:70px}
+.lane u{position:absolute;left:-10px;top:30px;width:30px;height:30px;border-radius:50%;background:linear-gradient(145deg,#ffe28a,#f4bd32);color:#7a5600;font:800 15px/30px sans-serif;text-decoration:none;box-shadow:0 4px 10px rgba(0,0,0,.25);opacity:0;animation:fly 1.5s var(--ease) infinite}
+.lane u:nth-child(2){animation-delay:.25s}.lane u:nth-child(3){animation-delay:.5s}.lane u:nth-child(4){animation-delay:.75s}.lane u:nth-child(5){animation-delay:1s}
+.xs{min-height:24px;font-weight:600;margin-top:6px}
+.xs .tick{display:inline-block;animation:pop .5s var(--ease)}
+#cf{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.ok{background:linear-gradient(145deg,#245fe8,#4a8bff);box-shadow:0 0 0 0 rgba(36,95,232,.4);animation:ring 1.6s ease-out 1,float 5s ease-in-out infinite}
+.ok svg{width:46px;height:46px}.ok path{stroke:#fff;stroke-width:5;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:60;stroke-dashoffset:60;animation:draw .6s .25s ease forwards}
+.mv{display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:left;margin:14px 0}
+.mv div{background:#f1f6ff;border-radius:18px;padding:12px}.mv small{color:var(--m);display:block;font-size:11px}.mv s{text-decoration:none;color:var(--m);font-size:12px}.mv b{display:block;font-size:18px}.mv .up b{color:#12915a}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+@keyframes bob{0%,100%{transform:translate(0,0)}50%{transform:translate(-12px,12px)}}
+@keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(40px,30px)}}
+@keyframes fly{0%{left:-10px;transform:translateY(0) scale(.6);opacity:0}15%{opacity:1}50%{transform:translateY(-34px) scale(1)}85%{opacity:1}100%{left:calc(100% - 20px);transform:translateY(0) scale(.6);opacity:0}}
+@keyframes pop{50%{transform:scale(1.07)}}
+@keyframes ring{to{box-shadow:0 0 0 34px rgba(36,95,232,0)}}
+@keyframes draw{to{stroke-dashoffset:0}}
+@media(prefers-reduced-motion:reduce){.card,.bk,.ok,body:before,body:after,.hd:before,.hd:after{animation:none!important}}
+.xrow{grid-template-columns:1fr 84px 1fr}.lane u{width:24px;height:24px;font-size:12px;line-height:24px;top:34px}.lane u:nth-child(n+4){display:none}.lane u:nth-child(2){animation-delay:.5s}.lane u:nth-child(3){animation-delay:1s}
+.li>.av{color:#fff}.hd:after{background:rgba(255,255,255,.1)!important}
 </style></head><body><div class="wrap">
 <div class="ph"><div id="scr"></div><nav class="nv" id="nv"></nav><div id="ov"></div><div id="t" role="status" aria-live="polite"></div></div>
 <aside class="mon" id="mon"></aside></div>
@@ -184,7 +246,7 @@ if(v==='lock'){const r=await api('/api/login',{pin:p});if(!r.ok){S.pin='';$('.do
 if(v==='bal'){const r=await api('/api/balance',{pin:p});if(!r.ok){S.pin='';$('.dots').outerHTML=dots();return $('#er').textContent=r.msg}S.bal=r.bal;return go('home')}
 const f=S.f;$('#ov').className='on chk';$('#ov').innerHTML='<div class="spin"></div><b>Processing payment…</b><small>Contacting your bank through the UPI network</small>';
 const [r]=await Promise.all([api('/api/pay',{pin:p,payload:f.p,amount:f.amt,bank:f.bank,note:f.note,gid:f.g&&f.g.id,code:f.code,cid:f.cid}),new Promise(z=>setTimeout(z,1300))]);
-$('#ov').className='';if(!r.ok&&!r.fatal){S.pin='';draw();return $('#er').textContent=r.msg}f.r=r;await load();go('res')}
+if(r.ok&&r.move)await transfer(r.move);$('#ov').className='';if(!r.ok&&!r.fatal){S.pin='';draw();return $('#er').textContent=r.msg}f.r=r;await load();go('res')}
 function ring(n){const c=326.7;return `<svg width="120" height="120" viewBox="0 0 130 130" style="transform:rotate(-90deg)"><circle cx="65" cy="65" r="52" fill="none" stroke="#555" stroke-width="12"/><circle cx="65" cy="65" r="52" fill="none" stroke="#FFC400" stroke-width="12" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c*(1-n/100)}"/></svg>`}
 const init=n=>esc(n).trim().charAt(0).toUpperCase();
 function lock(){return `<div style="padding:60px 24px;text-align:center"><div class="av" style="width:64px;height:64px;font-size:30px;margin:auto;background:var(--y);color:var(--ink)">Z</div><h2 style="margin:14px 0 4px">Zippay</h2><p style="color:var(--m)">Enter app PIN</p>${dots()}<div class="er" id="er"></div>${pad()}<p style="color:var(--m);font-size:12px;margin-top:14px">Demo app PIN: 2580 · UPI PIN: 1234</p></div>`}
@@ -197,15 +259,27 @@ const ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
 toast(ios?'In Safari, tap Share, then Add to Home Screen.':'Open your browser menu and choose Install app or Add to Home screen.');
 }
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;const button=$('#installBtn');if(button)button.textContent='Install'});
+const cu=(n,from=0)=>`<span data-cu="${n}" data-from="${from}">${inr(from)}</span>`;
+function wallet(){const p=S.me.play;return `<div class="card wal"><h3>${esc(p.bank)}<span class="tag">Play money</span></h3><div class="big">${cu(p.bal,S.seen?p.bal:0)}</div><small style="color:var(--m)">Practice balance. Payments move this money, not real money.</small><br><button class="rs" onclick="rs()">Reset demo money</button></div>`}
+async function rs(){await api('/api/demo/reset',{});S.seen=0;await load();draw();toast('Demo money restored.')}
+function tick(el,a,b,ms){const t0=performance.now();(function f(t){const k=Math.min(1,(t-t0)/ms),e=1-Math.pow(1-k,3);el.textContent=inr(Math.round(a+(b-a)*e));if(k<1)requestAnimationFrame(f)})(t0)}
+function countUps(){document.querySelectorAll('[data-cu]').forEach(el=>{const to=+el.dataset.cu,from=+el.dataset.from;if(from!==to)tick(el,from,to,900);S.seen=1})}
+const wait=ms=>new Promise(z=>setTimeout(z,ms));
+function confetti(){const c=$('#cf');if(!c)return;const x=c.getContext('2d');c.width=c.offsetWidth;c.height=c.offsetHeight;const col=['#f4bd32','#fff','#9fc0ff','#ffd76a','#4a8bff'],P=Array.from({length:110},()=>({x:c.width/2,y:c.height*.45,vx:(Math.random()-.5)*11,vy:-Math.random()*11-3,s:4+Math.random()*6,c:col[Math.random()*5|0],r:Math.random()*6}));let n=0;(function f(){x.clearRect(0,0,c.width,c.height);P.forEach(p=>{p.vy+=.26;p.x+=p.vx;p.y+=p.vy;p.r+=.2;x.fillStyle=p.c;x.save();x.translate(p.x,p.y);x.rotate(p.r);x.fillRect(-p.s/2,-p.s/2,p.s,p.s*.6);x.restore()});if(++n<130)requestAnimationFrame(f)})()}
+async function transfer(m){const o=$('#ov');o.className='on xfer';
+o.innerHTML=`<div class="xf"><h2>Sending ${inr(m.amount)}</h2><small>Play money only · nothing real moves</small><div class="xrow"><div class="bk"><small>From you</small><b>${esc(m.from_bank)}</b><div class="n" id="xa">${inr(m.from_before)}</div></div><div class="lane"><u>₹</u><u>₹</u><u>₹</u><u>₹</u><u>₹</u></div><div class="bk" id="xbk"><small>To ${esc(m.to_name)}</small><b>${esc(m.to_bank)}</b><div class="n" id="xb">${inr(m.to_before)}</div></div></div><div class="xs" id="xs">Taking it from your account…</div><canvas id="cf"></canvas></div>`;
+await wait(500);tick($('#xa'),m.from_before,m.from_after,1500);await wait(1700);$('#xs').textContent='Travelling over UPI…';await wait(900);
+$('#xs').textContent=`Landing in ${m.to_name}'s account…`;tick($('#xb'),m.to_before,m.to_after,1300);$('#xbk').classList.add('gain');await wait(1400);
+$('#xs').innerHTML='<span class="tick">✓</span> Money moved';confetti();await wait(1500)}
 function home(){const m=S.me,st=m.hist.filter(h=>h.status.startsWith('Stopped')).length;
 return `<div class="hd"><div class="row"><div><small>Welcome back</small><h2>${esc(m.name)}</h2></div><span class="shield ${m.guard.on&&m.guard.online?'':'off'}">${m.guard.demo?'Demo alerts':'PhishGuard'} ${m.guard.on&&m.guard.online?'ON':'OFF'}</span></div><small>${esc(m.vpa)}</small></div>
 <div class="card" style="margin-top:-12px"><div class="grid"><button onclick="go('scan')"><i>▣</i>Scan QR</button><button onclick="go('scan')"><i>@</i>To UPI ID</button><button onclick="go('bal')"><i>₹</i>Balance</button><button onclick="go('req')"><i>↙</i>Requests</button></div></div>
-${installCard()}
+${wallet()}${installCard()}
 ${S.bal?`<div class="card"><h3>Account balances</h3>${Object.entries(S.bal).map(([k,v])=>`<div class="row" style="padding:4px 0"><span>${k}</span><b>${inr(v)}</b></div>`).join('')}</div>`:''}
 <div class="card"><h3>People</h3><div class="pp">${m.contacts.map(c=>`<button onclick="start('${c.vpa}','typed')"><div class="av" style="margin:auto">${init(c.name)}</div>${esc(c.name)}</button>`).join('')}</div></div>
 ${st?`<div class="card" style="background:var(--y)"><b>${m.guard.demo?'Demo alerts automatically stopped':'PhishGuard stopped'} ${st} payment${st>1?'s':''} for review.</b></div>`:''}
 <div class="card"><h3>Recent transactions</h3>${txs(m.hist.slice(0,4))}</div>`}
-function txs(a){return a.map(h=>`<div class="li"><div class="av" style="background:${h.dr?'var(--b)':'var(--ink)'}">${init(h.name)}</div><div><b>${esc(h.name)}</b><small>${esc(h.time)}${h.utr!=='-'?' · UTR '+h.utr:''}</small></div><div style="text-align:right"><b>${h.dr?'-':''}${inr(h.amount)}</b><br><span class="pill ${h.dr?'':'s'}">${h.status}</span></div></div>`).join('')||'<small>No transactions yet.</small>'}
+function txs(a){return a.map(h=>`<div class="li"><div class="av" style="background:${h.dr?'var(--b)':'var(--ink)'}">${init(h.name)}</div><div><b>${esc(h.name)}</b><small>${esc(h.time)}${h.utr!=='-'?' · UTR '+h.utr:''}${h.bal_after!=null?' · Bal '+inr(h.bal_after):''}</small></div><div style="text-align:right"><b>${h.dr?'-':''}${inr(h.amount)}</b><br><span class="pill ${h.dr?'':'s'}">${h.status}</span></div></div>`).join('')||'<small>No transactions yet.</small>'}
 function scan(){return `<div class="hd"><button class="back" onclick="go('home')">← Back</button><h2>Scan QR or pay</h2></div>
 <div class="vf camera-box" id="cameraBox"><video id="qrVideo" autoplay playsinline muted></video><div class="scan-frame"></div><span></span><p class="camera-status" id="cameraStatus">Start the camera and point it at a UPI QR code</p></div>
 <div class="camera-controls"><button class="btn" id="cameraStart" onclick="startCamera()">Open camera</button><button class="btn g" id="cameraStop" onclick="stopCamera(true)" hidden>Stop camera</button></div>
@@ -253,7 +327,7 @@ if(g.needs_code){S.f.code=$('#cd').value;const x=await api('/api/gverify',{gid:g
 async function stop(){const f=S.f;await api('/api/cancel',{gid:f.g.id,payload:f.p,amount:f.amt,bank:f.bank});await load();$('#ov').className='';go('home');toast('Payment stopped. Your money is safe.')}
 async function dismissRisk(){await load();$('#ov').className='';go('home');toast('High-risk demo payment stopped automatically.')}
 function pin(){const f=S.f,g=f.g;return `<div class="hd" style="text-align:center"><small>Paying ${esc(f.info.name)}</small><h2 style="font-size:34px">${inr(f.amt)}</h2><small>${f.bank}</small><div style="margin-top:8px"><span class="shield ${g?'':'off'}">${g?(g.source==='demo'?'Demo alert · score ':'PhishGuard checked · score ')+g.score:f.off?'PhishGuard offline':'PhishGuard off'}</span></div></div><p style="text-align:center;margin-top:16px">Enter UPI PIN</p>${dots()}<div class="er" id="er"></div>${pad()}`}
-function res(){const r=S.f.r,t=r.txn;return r.ok?`<div style="padding:20px;text-align:center"><div class="ok">✓</div><h2>Payment successful</h2><h1 style="margin:8px 0">${inr(t.amount)}</h1><p>Paid to ${esc(t.name)}</p><div class="card" style="text-align:left"><table><tr><td>UPI ID</td><td>${esc(t.vpa)}</td></tr><tr><td>From</td><td>${t.bank}</td></tr><tr><td>UTR</td><td>${t.utr}</td></tr><tr><td>Time</td><td>${t.time}</td></tr></table></div><button class="btn" onclick="go('home')">Done</button></div>`
+function res(){const r=S.f.r,t=r.txn;return r.ok?`<div style="padding:20px;text-align:center"><div class="ok"><svg viewBox="0 0 48 48"><path d="M12 25l8 8 16-18"/></svg></div><h2>Payment successful</h2><h1 style="margin:8px 0">${inr(t.amount)}</h1><p>Paid to ${esc(t.name)}</p>${r.move?`<div class="mv"><div><small>Your ${esc(r.move.from_bank)}</small><s>${inr(r.move.from_before)}</s><b>${inr(r.move.from_after)}</b></div><div class="up"><small>${esc(t.name)} · ${esc(r.move.to_bank)}</small><s>${inr(r.move.to_before)}</s><b>${inr(r.move.to_after)}</b></div></div>`:''}<div class="card" style="text-align:left"><table><tr><td>UPI ID</td><td>${esc(t.vpa)}</td></tr><tr><td>From</td><td>${t.bank}</td></tr><tr><td>UTR</td><td>${t.utr}</td></tr><tr><td>Time</td><td>${t.time}</td></tr></table></div><button class="btn" onclick="go('home')">Done</button></div>`
 :`<div style="padding:20px;text-align:center"><div class="ok x">!</div><h2>Payment failed</h2><p style="margin:10px 0">${esc(r.msg)}</p><small>Error code ${r.code}</small><div style="margin-top:20px"><button class="btn" onclick="go('home')">Back to home</button></div></div>`}
 function hist(){return `<div class="hd"><h2>History</h2><small>Daily UPI limit used: ${inr(S.me.spent)} of ${inr(S.me.limit)}</small></div><div class="card">${txs(S.me.hist)}</div>`}
 function req(){return `<div class="hd"><h2>Payment requests</h2><small>Never approve a request to receive money</small></div>${S.me.collect.map(c=>`<div class="card"><div class="row"><b>${esc(c.from)}</b><b>${inr(c.amount)}</b></div><small style="color:var(--m)">${esc(c.vpa)}</small><p style="margin:8px 0">${esc(c.note)}</p><div class="row"><button class="btn g" onclick="dc(${c.id})">Decline</button><button class="btn" onclick="start('${c.payload}','qr',${c.id})">Pay</button></div></div>`).join('')||'<div class="card">No pending requests.</div>'}`}
@@ -266,7 +340,7 @@ function prof(){const m=S.me,g=m.guard;return `<div class="hd"><div class="row" 
 async function tg(){await api('/api/settings',{guard:!S.me.guard.on});await load();draw()}
 async function rp(){const x=await api('/api/report',{vpa:$('#rv').value,reason:'User report'});toast(x.msg)}
 function draw(){const m=S.me,v=S.v,V={lock,home,scan,amt,pin,res,hist,req,prof,bal:()=>`<div class="hd"><button class="back" onclick="go('home')">← Back</button><h2>Check balance</h2></div><p style="text-align:center;margin-top:20px">Enter UPI PIN</p>${dots()}<div class="er" id="er"></div>${pad()}`};
-$('#scr').innerHTML=V[v]();const show=['home','hist','req','prof'].includes(v);$('#nv').style.display=show?'flex':'none';
+$('#scr').innerHTML=V[v]();countUps();const show=['home','hist','req','prof'].includes(v);$('#nv').style.display=show?'flex':'none';
 if(show)$('#nv').innerHTML=[['home','Home'],['hist','History'],['scan','Scan'],['req','Requests'],['prof','Profile']].map(([k,l])=>`<button class="${v===k?'on':''}" onclick="go('${k}')">${l}${k==='req'&&m.collect.length?`<b>${m.collect.length}</b>`:''}</button>`).join('');mon()}
 async function mon(){const g=await api('/api/guardlog');$('#mon').innerHTML=`<h3>${g.demo?'Demo safety alerts':'PhishGuard extension'}</h3><p style="color:var(--m);margin:6px 0 12px;font-size:13px">${g.demo?'Simulated locally for every payment option. These are not real fraud checks.':'The PhishGuard service behind the app-debug.apk. Zippay calls it before every payment.'}</p><span class="shield ${g.online?'':'off'}">${g.demo?'Simulation active':g.online?'Connected':'Offline'}</span><div style="margin-top:12px">${g.log.map(l=>`<div class="li"><div><b>${esc(l.vpa)}</b><small>${l.time} · ${l.ms} ms</small></div><b>${l.score??'-'}</b></div>`).join('')||'<small style="color:var(--m)">No checks yet.</small>'}</div>`}
 window.addEventListener('appinstalled',()=>{installPrompt=null;toast('Zippay was added to your device.')});

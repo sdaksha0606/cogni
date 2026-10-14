@@ -8,7 +8,15 @@ app = Flask(__name__)
 DEMO_ALERTS = os.getenv("DEMO_ALERTS", "1") == "1"
 ME = {"name": "Arjun Kumar", "mobile": "98765 43210", "vpa": "arjun@oksbi", "app_pin": "2580",
       "upi_pin": "1234", "limit": 100000, "guard": True, "tries": 0}
-BANKS = {"SBI ••1234": 48250.0, "HDFC ••5678": 12600.0}
+DEMO_BANK = "Zippay Demo Bank ••0001"   # play-money account: nothing here is real
+BANKS = {DEMO_BANK: 250000.0, "SBI ••1234": 48250.0, "HDFC ••5678": 12600.0}
+START = dict(BANKS)
+RECV, RECV_BANK = {}, "Demo Bank ••7788"  # fake receiving accounts, keyed by UPI ID
+
+
+def recv_bal(vpa):
+    """Starting play-money balance of the payee's fake bank account (stable per UPI ID)."""
+    return RECV.setdefault(vpa, float(5000 + sum(map(ord, vpa)) % 40000))
 CONTACTS = [{"name": "Amma", "vpa": "amma@oksbi"}, {"name": "Ramesh", "vpa": "ramesh@okaxis"},
             {"name": "DMart", "vpa": "dmart@okicici"}, {"name": "TNEB Bill", "vpa": "tneb.bills@sbi"}]
 NAMES = {"amma@oksbi": "Lakshmi Kumar", "ramesh@okaxis": "Ramesh S", "dmart@okicici": "Avenue Supermarts Ltd",
@@ -169,7 +177,7 @@ def login():
 
 @app.get("/api/me")
 def me():
-    return jsonify(name=ME["name"], vpa=ME["vpa"], mobile=ME["mobile"], contacts=CONTACTS, banks=list(BANKS),
+    return jsonify(name=ME["name"], vpa=ME["vpa"], mobile=ME["mobile"], contacts=CONTACTS, banks=list(BANKS), play={"bank": DEMO_BANK, "bal": BANKS[DEMO_BANK]},
                    hist=HIST[:30], collect=COLLECT, limit=ME["limit"], spent=int(spent()),
                    guard={"on": ME["guard"], "online": True if DEMO_ALERTS else ext.online(), "demo": DEMO_ALERTS})
 
@@ -276,13 +284,26 @@ def pay():
     if amt > BANKS[d["bank"]]: return fail("Z9", "Insufficient funds in your account.")
     if spent() + amt > ME["limit"]: return fail("U30", "Daily UPI limit of Rs 1,00,000 exceeded.")
     if g: g["paid"] = True
+    before, rb = BANKS[d["bank"]], recv_bal(info["vpa"])
     BANKS[d["bank"]] -= amt
+    RECV[info["vpa"]] = rb + amt  # money "arrives" in the fake receiving bank
     t = {"id": len(HIST) + 1, "name": info["name"], "vpa": info["vpa"], "amount": amt, "bank": d["bank"],
          "utr": "".join(random.choices("0123456789", k=12)), "time": time.strftime("%d %b, %I:%M %p"),
-         "status": "Success", "note": d.get("note", ""), "ts": time.time(), "dr": True}
+         "status": "Success", "note": d.get("note", ""), "ts": time.time(), "dr": True,
+         "bal_after": BANKS[d["bank"]]}
     HIST.insert(0, t)
     COLLECT[:] = [c for c in COLLECT if c["id"] != d.get("cid")]
-    return jsonify(ok=True, txn=t)
+    move = {"amount": amt, "from_bank": d["bank"], "from_before": before, "from_after": BANKS[d["bank"]],
+            "to_name": info["name"], "to_vpa": info["vpa"], "to_bank": RECV_BANK,
+            "to_before": rb, "to_after": RECV[info["vpa"]], "demo": True}
+    return jsonify(ok=True, txn=t, move=move)
+
+
+@app.post("/api/demo/reset")
+def demo_reset():
+    BANKS.update(START)
+    RECV.clear()
+    return jsonify(ok=True)
 
 
 @app.post("/api/cancel")
