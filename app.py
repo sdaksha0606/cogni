@@ -635,5 +635,24 @@ def autopay_run():
                    issue=next((r["msg"] for r in res if r["status"] != "paid"), ""))
 
 
+@app.post("/api/loancheck")
+def loancheck():
+    """Standalone loan-offer check: no payment is made."""
+    d = request.json or {}
+    raw, note = (d.get("to") or "").strip(), clean(d.get("note"), 300)
+    if not raw: return jsonify(ok=False, msg="Enter the lender's UPI ID, mobile number or link.")
+    info = resolve(raw)
+    loan = loan_risks(info, note + " loan", raw if raw.lower().startswith("http") else "")
+    url_reasons, url_extra, host = detect_url_risks(raw)
+    reasons = sorted(loan["reasons"] + url_reasons, key=lambda r: -r["w"])
+    if url_extra or loan["extra_high"]: level = "fake"
+    elif loan["flag"] or any(r["w"] >= 30 for r in url_reasons): level = "risky"
+    elif loan["status"] == "Registered lender": level = "genuine"
+    else: level = "unknown"
+    return jsonify(ok=True, level=level, status=loan["status"], reasons=reasons[:5],
+                   verify={"Lender ID": info["vpa"] or host or "None", "Bank-verified name": info["registered"] or "Not verified",
+                           "Loan check": loan["status"]})
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=False)
