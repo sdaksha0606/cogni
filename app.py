@@ -1,4 +1,4 @@
-import os, re, time, random, statistics, requests
+import os, re, time, random, statistics, datetime, requests
 import ipaddress
 from urllib.parse import urlparse, parse_qs, unquote
 from flask import Flask, jsonify, request, send_from_directory
@@ -22,12 +22,13 @@ CONTACTS = [{"name": "Amma", "vpa": "amma@oksbi"}, {"name": "Ramesh", "vpa": "ra
 NAMES = {"amma@oksbi": "Lakshmi Kumar", "ramesh@okaxis": "Ramesh S", "dmart@okicici": "Avenue Supermarts Ltd",
          "tneb.bills@sbi": "TANGEDCO", "sharma.store@okaxis": "Sharma General Store",
          "dmart-help@okxyz": "R Kumar Traders", "rewards@paytmx": "Rewards Desk", "tneb.biils@sbi": "S Mohan", "iyer.rent@okaxis": "Mr Iyer (Rent)"}
-CATS = ("Bills", "Grocery", "Misc", "Rent")
+CATS = ("Bills", "Grocery", "Misc", "Rent", "EMI")
 
 
 def categorize(name, vpa="", note=""):
     """Guess Bills / Grocery / Rent from the payee; everything else is Misc."""
     s = f"{name} {vpa} {note}".lower()
+    if re.search(r"\bemi\b|loan|finance|instal", s): return "EMI"
     for cat, keys in (("Rent", ("rent", "landlord")),
                       ("Bills", ("bill", "tneb", "electric", "recharge", "gas", "water", "dth", "broadband")),
                       ("Grocery", ("mart", "grocery", "store", "supermarket", "vegetable", "basket"))):
@@ -48,6 +49,78 @@ COLLECT = [{"id": 1, "from": "Refund Desk", "vpa": "rewards@paytmx", "amount": 4
             "payload": "upi://pay?pa=rewards@paytmx&pn=Refund Desk&am=4999"},
            {"id": 2, "from": "Ramesh", "vpa": "ramesh@okaxis", "amount": 500, "note": "Dinner split",
             "payload": "upi://pay?pa=ramesh@okaxis&pn=Ramesh&am=500"}]
+COLLECT.append({"id": 3, "from": "QuickCash Loans", "vpa": "quickcash.loan@okaxis", "amount": 2999,
+                "note": "Loan approved. Pay the processing fee to release Rs 50,000.",
+                "payload": "upi://pay?pa=quickcash.loan@okaxis&pn=QuickCash Loans&am=2999"})
+NAMES.update({"bajajfin.emi@okicici": "Bajaj Finance Ltd", "hdfcbank.emi@okhdfcbank": "HDFC Bank Ltd",
+              "tatacapital.emi@okaxis": "Tata Capital Financial Services Ltd", "cmwssb.water@sbi": "Chennai Metro Water",
+              "airtel.broadband@okicici": "Bharti Airtel Ltd", "instaloan.fee@paytmx": "Rahul Verma",
+              "quickcash.loan@okaxis": "QuickCash Services"})
+
+# ---------- Fake loan detection ----------
+LENDERS = {"bajajfin.emi@okicici": "Bajaj Finance Ltd", "hdfcbank.emi@okhdfcbank": "HDFC Bank Ltd",
+           "tatacapital.emi@okaxis": "Tata Capital Financial Services Ltd"}   # demo list of registered lenders
+LENDER_CHIPS = [{"name": "Bajaj Finance", "vpa": "bajajfin.emi@okicici"}, {"name": "HDFC Bank", "vpa": "hdfcbank.emi@okhdfcbank"},
+                {"name": "Tata Capital", "vpa": "tatacapital.emi@okaxis"}]
+BILLERS = [{"name": "TNEB Bill", "vpa": "tneb.bills@sbi"}, {"name": "Chennai Water", "vpa": "cmwssb.water@sbi"},
+           {"name": "Airtel Broadband", "vpa": "airtel.broadband@okicici"}]
+LOAN_RX = re.compile(r"loan|lending|\blender\b|instacash|quickcash|pre-?approved|pre approved|disburs|cibil|credit (?:limit|line)|\bnbfc\b|\bemi\b", re.I)
+FEE_RX = re.compile(r"processing|insurance|\bgst\b|stamp|verification|registration|security deposit|advance|\bnoc\b|service charge|\bfee|charges|activation|release|unlock|\bdeposit", re.I)
+URGENT_RX = re.compile(r"urgent|today only|last chance|immediately|limited time|expires?", re.I)
+COMPANY_RX = re.compile(r"\b(ltd|limited|pvt|private|bank|finance|capital|llp|inc|corp)\b", re.I)
+
+
+def loan_risks(info, note="", payload=""):
+    """Fake-loan signs: loan wording plus an advance fee, an unregistered lender, or a personal account."""
+    out = {"flag": False, "extra_high": False, "reasons": [], "status": "No loan signs"}
+    vpa = info.get("vpa") or ""
+    if vpa in LENDERS:
+        out["status"] = "Registered lender"
+        return out
+    text = " ".join([info.get("name") or "", vpa, note or "", payload or ""])
+    if not LOAN_RX.search(text): return out
+    known = vpa in {c["vpa"] for c in CONTACTS}
+    fee = bool(FEE_RX.search(text))
+    if known and not fee: return out   # e.g. paying back a friend
+    R = [{"title": "Loan payment detected", "why": "The payee, note or link talks about a loan.", "w": 10}]
+    if fee: R.append({"title": "Fee asked before the loan", "why": "Real lenders take fees out of the loan. They never ask you to pay first.", "w": 50})
+    if known:
+        out.update(reasons=R, status="Fee mentioned, check it")
+        return out
+    R.append({"title": "Lender not on the registered list", "why": "This payee is not among the registered banks and lenders we know.", "w": 25})
+    reg = info.get("registered")
+    if not reg: R.append({"title": "Payee name not verified by bank", "why": "No bank-verified name for this UPI ID.", "w": 15})
+    elif not COMPANY_RX.search(reg): R.append({"title": "Money goes to a person, not a company", "why": f"The account belongs to {reg}.", "w": 20})
+    if URGENT_RX.search(text): R.append({"title": "Pressure to act fast", "why": "Scam lenders rush you so you do not check.", "w": 10})
+    out.update(flag=True, extra_high=fee, reasons=R, status="Possible fake loan")
+    return out
+
+
+# ---------- Autopay for bills and EMIs ----------
+AUTOPAY, AUTOPAY_CAP = {"on": True}, 15000
+MANDATES = [{"id": 1, "kind": "Bill", "name": "TNEB Bill", "vpa": "tneb.bills@sbi", "amount": 1200, "day": 5, "bank": "SBI ••1234", "on": True},
+            {"id": 2, "kind": "EMI", "name": "Bajaj Finance", "vpa": "bajajfin.emi@okicici", "amount": 4250, "day": 18, "bank": "SBI ••1234", "on": True},
+            {"id": 3, "kind": "Bill", "name": "Chennai Water", "vpa": "cmwssb.water@sbi", "amount": 420, "day": 20, "bank": "SBI ••1234", "on": False}]
+
+
+def next_due(m):
+    today = datetime.date.today()
+    due = today.replace(day=m["day"])
+    if m.get("paid_month") == today.strftime("%Y-%m") or due < today:
+        y, mo = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+        due = datetime.date(y, mo, m["day"])
+    return due
+
+
+def autopay_view():
+    today, items = datetime.date.today(), []
+    for m in MANDATES:
+        due = next_due(m)
+        items.append({**{k: m[k] for k in ("id", "kind", "name", "vpa", "amount", "day", "bank", "on")},
+                      "next": due.strftime("%d %b"), "days": (due - today).days, "last": m.get("last")})
+    return {"on": AUTOPAY["on"], "items": items, "billers": BILLERS, "lenders": LENDER_CHIPS, "cap": AUTOPAY_CAP}
+
+
 GLOG, PRE = [], {}
 def behavior(info, amt, ctx):
     """Signals only this app can see: the user's own history, device, city and time."""
@@ -103,13 +176,18 @@ def detect_url_risks(payload):
     return reasons, extra_high, host or None
 
 
-def local_guard(info, amt, ctx, payload, elapsed_ms):
+def local_guard(info, amt, ctx, payload, elapsed_ms, note=""):
     reasons = [{"title": "Demo safety alert", "why": "This simulated warning demonstrates the review flow; it is not a real fraud assessment.", "w": 25}]
     reasons.extend(behavior(info, amt, ctx))
     url_reasons, extra_high, url_host = detect_url_risks(payload)
     reasons.extend(url_reasons)
+    loan = loan_risks(info, note, payload)
+    reasons.extend(loan["reasons"])
+    extra_high = extra_high or loan["extra_high"]
     reasons.sort(key=lambda reason: -reason["w"])
     score = min(100, sum(reason["w"] for reason in reasons))
+    if loan["flag"]:
+        score = max(score, 60)
     if extra_high:
         score = max(score, 90)
     gid = f"local-{time.time_ns()}"
@@ -117,11 +195,12 @@ def local_guard(info, amt, ctx, payload, elapsed_ms):
             "needs_code": False, "level": "extra-high" if extra_high else "high" if score >= 55 else "medium" if score >= 25 else "low",
             "reasons": reasons, "source": "demo" if DEMO_ALERTS else "local",
             "payload": payload, "amount": amt, "auto_stopped": False,
+            "loan": {"flag": loan["flag"], "status": loan["status"]},
             "verify": {"Recipient ID": info["vpa"] or "None",
                        "Registered name": info["registered"] or "Not verified by bank",
                        "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}",
                        "Context": f"{ctx['device']}, {ctx['city']}, {ctx['hour']}:00",
-                       **({"Payment URL host": url_host} if url_host else {})}}
+                       **({"Payment URL host": url_host} if url_host else {}), "Loan check": loan["status"]}}
 
 
 def resolve(t):
@@ -146,11 +225,11 @@ def spent():
     return sum(h["amount"] for h in HIST if h.get("dr") and h["status"] == "Success" and time.time() - h["ts"] < 86400)
 
 
-def record_stopped_payment(info, amt, bank, demo=False):
+def record_stopped_payment(info, amt, bank, demo=False, loan=False):
     HIST.insert(0, {"id": len(HIST) + 1, "name": info["name"], "vpa": info["vpa"] or "unknown",
                     "amount": amt, "bank": bank or "", "utr": "-", "time": time.strftime("%d %b, %I:%M %p"),
-                    "status": "Stopped automatically · demo alert" if demo else "Stopped by PhishGuard",
-                    "note": "Simulated high-risk warning" if demo else "High-risk payment blocked",
+                    "status": "Stopped · fake loan suspected" if loan else "Stopped automatically · demo alert" if demo else "Stopped by PhishGuard",
+                    "note": "Fake loan signs found" if loan else "Simulated high-risk warning" if demo else "High-risk payment blocked",
                     "ts": time.time(), "dr": False})
 
 
@@ -192,7 +271,7 @@ def login():
 
 @app.get("/api/me")
 def me():
-    return jsonify(name=ME["name"], vpa=ME["vpa"], mobile=ME["mobile"], contacts=CONTACTS, banks=list(BANKS),
+    return jsonify(autopay=autopay_view(), name=ME["name"], vpa=ME["vpa"], mobile=ME["mobile"], contacts=CONTACTS, banks=list(BANKS),
                    hist=HIST[:30], collect=COLLECT, sent=SENT[:20], avatar=ME.get("avatar", ""), limit=ME["limit"], spent=int(spent()),
                    guard={"on": ME["guard"], "online": True if DEMO_ALERTS else ext.online(), "demo": DEMO_ALERTS})
 
@@ -251,13 +330,13 @@ def precheck():
     if ME["guard"]:
         started = time.time()
         if DEMO_ALERTS:
-            g = local_guard(info, amt, d["ctx"], d["payload"], int((time.time() - started) * 1000))
+            g = local_guard(info, amt, d["ctx"], d["payload"], int((time.time() - started) * 1000), d.get("note", ""))
             g["bank"] = d.get("bank")
         else:
             g = ext.check(d["payload"], info, amt, d.get("note", ""), d["ctx"], d.get("src"))
             if "error" in g:
                 error = g["error"]
-                g = local_guard(info, amt, d["ctx"], d["payload"], int((time.time() - started) * 1000))
+                g = local_guard(info, amt, d["ctx"], d["payload"], int((time.time() - started) * 1000), d.get("note", ""))
                 if g:
                     g["source"] = "local"
                     g["bank"] = d.get("bank")
@@ -273,8 +352,15 @@ def precheck():
             url_reasons, extra_high, url_host = detect_url_risks(d["payload"])
             seen.update(r["title"] for r in g["reasons"])
             g["reasons"] += [r for r in url_reasons if r["title"] not in seen]
+            loan = loan_risks(info, d.get("note", ""), d["payload"])
+            seen.update(r["title"] for r in g["reasons"])
+            new_loan = [r for r in loan["reasons"] if r["title"] not in seen]
+            g["reasons"] += new_loan
+            g["loan"] = {"flag": loan["flag"], "status": loan["status"]}
+            extra_high = extra_high or loan["extra_high"]
             g["reasons"].sort(key=lambda r: -r["w"])
-            g["score"] = min(100, g["score"] + sum(r["w"] for r in extra) + sum(r["w"] for r in url_reasons))
+            g["score"] = min(100, g["score"] + sum(r["w"] for r in extra) + sum(r["w"] for r in url_reasons) + sum(r["w"] for r in new_loan))
+            if loan["flag"]: g["score"] = max(g["score"], 60)
             if extra_high:
                 g["score"] = max(g["score"], 90)
                 g["blocked"] = True
@@ -282,11 +368,11 @@ def precheck():
             g["level"] = "extra-high" if extra_high else "high" if g["score"] >= 55 else "medium" if g["needs_code"] or g["score"] >= 25 else "low"
             g["verify"] = {"Recipient ID": info["vpa"] or "None", "Registered name": info["registered"] or "Not verified by bank",
                            "Name on QR": info["name"], "Amount": f"Rs {amt:,.0f}", "Context": f"{d['ctx']['device']}, {d['ctx']['city']}, {d['ctx']['hour']}:00",
-                           **({"Payment URL host": url_host} if url_host else {})}
+                           **({"Payment URL host": url_host} if url_host else {}), "Loan check": loan["status"]}
         GLOG.append({"time": time.strftime("%H:%M:%S"), "ms": g["ms"], "ok": True,
                      "vpa": info["vpa"] or "-", "score": g["score"], "level": g["level"]})
         if g["blocked"]:
-            record_stopped_payment(info, amt, d.get("bank", ""), demo=g.get("source") == "demo")
+            record_stopped_payment(info, amt, d.get("bank", ""), demo=g.get("source") == "demo", loan=bool((g.get("loan") or {}).get("flag")))
             g["auto_stopped"] = True
         PRE[g["id"]] = g
     return jsonify(info=info, guard=g, offline=ME["guard"] and g is None)
@@ -360,7 +446,7 @@ def cancel():
     g = PRE.get(d.get("gid"))
     if g and not g.get("auto_stopped"):
         record_stopped_payment(info, float(d.get("amount") or 0), d.get("bank", ""),
-                               demo=g.get("source") == "demo")
+                               demo=g.get("source") == "demo", loan=bool((g.get("loan") or {}).get("flag")))
         g["auto_stopped"] = True
     return jsonify(ok=True)
 
@@ -447,6 +533,106 @@ def report():
 def guardlog():
     return jsonify(online=True if DEMO_ALERTS else ext.online(), demo=DEMO_ALERTS,
                    log=GLOG[-8:][::-1], url=ext.BASE)
+
+
+def check_pin(pin):
+    if pin == ME["upi_pin"]:
+        ME["tries"] = 0
+        return None
+    ME["tries"] += 1
+    left = 3 - ME["tries"]
+    if left <= 0:
+        ME["tries"] = 0
+        return "UPI PIN tries exceeded. Try again after some time."
+    return f"Incorrect UPI PIN. {left} attempt{'s' if left > 1 else ''} left."
+
+
+def find_mandate(i):
+    return next((m for m in MANDATES if m["id"] == i), None)
+
+
+@app.post("/api/autopay/master")
+def autopay_master():
+    AUTOPAY["on"] = bool((request.json or {}).get("on"))
+    return jsonify(ok=True)
+
+
+@app.post("/api/autopay/toggle")
+def autopay_toggle():
+    d = request.json or {}
+    m = find_mandate(d.get("id"))
+    if not m: return jsonify(ok=False, msg="That autopay no longer exists.")
+    m["on"] = bool(d.get("on"))
+    return jsonify(ok=True)
+
+
+@app.post("/api/autopay/delete")
+def autopay_delete():
+    MANDATES[:] = [m for m in MANDATES if m["id"] != (request.json or {}).get("id")]
+    return jsonify(ok=True)
+
+
+@app.post("/api/autopay/add")
+def autopay_add():
+    d = request.json or {}
+    kind = "EMI" if d.get("kind") == "EMI" else "Bill"
+    info = resolve(d.get("to"))
+    if not info["vpa"] or not re.fullmatch(r"[a-z0-9._-]{2,}@[a-z]{2,}", info["vpa"]):
+        return jsonify(ok=False, msg="Enter a UPI ID like name@bank.")
+    try: amt = round(float(d.get("amount")), 2)
+    except (TypeError, ValueError): return jsonify(ok=False, msg="Enter an amount.")
+    if not 1 <= amt <= AUTOPAY_CAP: return jsonify(ok=False, msg=f"Autopay is limited to Rs {AUTOPAY_CAP:,} per payment. Pay larger amounts yourself.")
+    try: day = int(d.get("day"))
+    except (TypeError, ValueError): day = 0
+    if not 1 <= day <= 28: return jsonify(ok=False, msg="Pick a day between 1 and 28.")
+    if d.get("bank") not in BANKS: return jsonify(ok=False, msg="Pick a linked bank account.")
+    loan = loan_risks(info)
+    if loan["flag"]:
+        return jsonify(ok=False, loan=True, msg="Autopay blocked. This payee shows signs of a fake loan: real lenders never ask for money first.")
+    if kind == "EMI" and info["vpa"] not in LENDERS:
+        return jsonify(ok=False, loan=True, msg="We could not verify this lender. EMI autopay works only with registered lenders.")
+    if any(m["vpa"] == info["vpa"] and m["kind"] == kind for m in MANDATES):
+        return jsonify(ok=False, msg="Autopay for this payee is already set up.")
+    err = check_pin(d.get("pin"))
+    if err: return jsonify(ok=False, msg=err)
+    name = next((c["name"] for c in LENDER_CHIPS + BILLERS if c["vpa"] == info["vpa"]), None) or info["name"]
+    m = {"id": max([x["id"] for x in MANDATES] or [0]) + 1, "kind": kind, "name": name, "vpa": info["vpa"],
+         "amount": amt, "day": day, "bank": d["bank"], "on": True}
+    MANDATES.append(m)
+    return jsonify(ok=True, name=name)
+
+
+@app.post("/api/autopay/run")
+def autopay_run():
+    """Demo only: fast-forward to the due date and pay every active autopay that has not been paid this month."""
+    if not AUTOPAY["on"]: return jsonify(ok=False, msg="Autopay is off. Turn it on to run payments.")
+    key, res = datetime.date.today().strftime("%Y-%m"), []
+    for m in MANDATES:
+        if not m["on"] or m.get("paid_month") == key: continue
+        info = resolve(m["vpa"])
+        info["name"] = m["name"]
+        if loan_risks(info)["flag"] or (m["kind"] == "EMI" and m["vpa"] not in LENDERS):
+            m["on"] = False
+            res.append({"name": m["name"], "status": "paused", "msg": f"{m['name']} was paused: the lender could not be verified."})
+            continue
+        amt, bank = m["amount"], m["bank"]
+        if amt > BANKS.get(bank, 0):
+            res.append({"name": m["name"], "status": "failed", "msg": f"{m['name']} failed: not enough money in {bank}."})
+            continue
+        if spent() + amt > ME["limit"]:
+            res.append({"name": m["name"], "status": "failed", "msg": f"{m['name']} failed: daily UPI limit reached."})
+            continue
+        BANKS[bank] -= amt
+        RECV[m["vpa"]] = recv_bal(m["vpa"]) + amt
+        HIST.insert(0, {"id": len(HIST) + 1, "name": m["name"], "vpa": m["vpa"], "amount": amt, "bank": bank,
+                        "utr": "".join(random.choices("0123456789", k=12)), "time": time.strftime("%d %b, %I:%M %p"),
+                        "status": "Success", "note": f"Autopay · {m['kind']}", "ts": time.time(), "dr": True,
+                        "cat": "EMI" if m["kind"] == "EMI" else "Bills", "auto": True})
+        m["paid_month"], m["last"] = key, time.strftime("%d %b")
+        res.append({"name": m["name"], "status": "paid", "amount": amt})
+    paid = [r for r in res if r["status"] == "paid"]
+    return jsonify(ok=True, results=res, paid=len(paid), total=sum(r["amount"] for r in paid),
+                   issue=next((r["msg"] for r in res if r["status"] != "paid"), ""))
 
 
 if __name__ == "__main__":
