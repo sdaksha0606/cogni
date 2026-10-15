@@ -7,7 +7,7 @@ import extension_client as ext
 app = Flask(__name__)
 DEMO_ALERTS = os.getenv("DEMO_ALERTS", "1") == "1"
 ME = {"name": "Arjun Kumar", "mobile": "98765 43210", "vpa": "arjun@oksbi", "app_pin": "2580",
-      "upi_pin": "1234", "limit": 100000, "guard": True, "tries": 0}
+      "upi_pin": "1234", "limit": 100000, "guard": True, "tries": 0, "avatar": ""}
 DEMO_BANK = "Zippay Demo Bank ••0001"   # play-money account: nothing here is real
 BANKS = {DEMO_BANK: 250000.0, "SBI ••1234": 48250.0, "HDFC ••5678": 12600.0}
 START = dict(BANKS)
@@ -43,6 +43,7 @@ HIST = [{"id": i, "name": n, "vpa": v, "amount": a, "bank": "SBI ••1234", "u
                                                 ("Mr Iyer (Rent)", "iyer.rent@okaxis", 6500, "428111902244", "29 Sep, 09:15 AM", 4),
                                                 ("Ramesh", "ramesh@okaxis", 350, "428730045512", "02 Oct, 08:20 PM", 1.6)], 1)]
 HIST.sort(key=lambda h: -h["ts"])
+SENT = []  # money requests the user has sent (demo): Pending -> Paid / Cancelled
 COLLECT = [{"id": 1, "from": "Refund Desk", "vpa": "rewards@paytmx", "amount": 4999, "note": "Refund pending. Approve to receive.",
             "payload": "upi://pay?pa=rewards@paytmx&pn=Refund Desk&am=4999"},
            {"id": 2, "from": "Ramesh", "vpa": "ramesh@okaxis", "amount": 500, "note": "Dinner split",
@@ -191,8 +192,8 @@ def login():
 
 @app.get("/api/me")
 def me():
-    return jsonify(name=ME["name"], vpa=ME["vpa"], mobile=ME["mobile"], contacts=CONTACTS, banks=list(BANKS), play={"bank": DEMO_BANK, "bal": BANKS[DEMO_BANK]},
-                   hist=HIST[:30], collect=COLLECT, limit=ME["limit"], spent=int(spent()),
+    return jsonify(name=ME["name"], vpa=ME["vpa"], mobile=ME["mobile"], contacts=CONTACTS, banks=list(BANKS),
+                   hist=HIST[:30], collect=COLLECT, sent=SENT[:20], avatar=ME.get("avatar", ""), limit=ME["limit"], spent=int(spent()),
                    guard={"on": ME["guard"], "online": True if DEMO_ALERTS else ext.online(), "demo": DEMO_ALERTS})
 
 
@@ -336,13 +337,12 @@ def pay():
     t = {"id": len(HIST) + 1, "name": info["name"], "vpa": info["vpa"], "amount": amt, "bank": d["bank"],
          "utr": "".join(random.choices("0123456789", k=12)), "time": time.strftime("%d %b, %I:%M %p"),
          "status": "Success", "note": d.get("note", ""), "ts": time.time(), "dr": True,
-         "bal_after": BANKS[d["bank"]],
+        
          "cat": d.get("cat") if d.get("cat") in CATS else categorize(info["name"], info["vpa"], d.get("note", ""))}
     HIST.insert(0, t)
     COLLECT[:] = [c for c in COLLECT if c["id"] != d.get("cid")]
     move = {"amount": amt, "from_bank": d["bank"], "from_before": before, "from_after": BANKS[d["bank"]],
-            "to_name": info["name"], "to_vpa": info["vpa"], "to_bank": RECV_BANK,
-            "to_before": rb, "to_after": RECV[info["vpa"]], "demo": True}
+            "to_name": info["name"], "to_vpa": info["vpa"], "to_bank": RECV_BANK, "demo": True}
     return jsonify(ok=True, txn=t, move=move)
 
 
@@ -363,6 +363,64 @@ def cancel():
                                demo=g.get("source") == "demo")
         g["auto_stopped"] = True
     return jsonify(ok=True)
+
+
+def clean(s, n):
+    return " ".join(re.sub(r"[<>\"'&]", "", (s or "").strip()).split())[:n]
+
+
+@app.post("/api/profile")
+def profile():
+    d = request.json or {}
+    name = clean(d.get("name"), 30)
+    if len(name) < 2: return jsonify(ok=False, msg="Enter a name with at least 2 characters.")
+    av = d.get("avatar")
+    if av:
+        if not (isinstance(av, str) and len(av) <= 150_000 and re.fullmatch(r"data:image/jpeg;base64,[A-Za-z0-9+/=]+", av)):
+            return jsonify(ok=False, msg="That photo could not be used. Try a different image.")
+        ME["avatar"] = av
+    elif d.get("remove"):
+        ME["avatar"] = ""
+    ME["name"] = name
+    return jsonify(ok=True)
+
+
+@app.post("/api/request/create")
+def request_create():
+    d = request.json or {}
+    raw = (d.get("to") or "").strip().lower()
+    if raw.isdigit() and len(raw) == 10: vpa = raw + "@ybl"
+    elif re.fullmatch(r"[a-z0-9._-]{2,}@[a-z]{2,}", raw): vpa = raw
+    else: return jsonify(ok=False, msg="Enter a 10-digit mobile number or a UPI ID like name@bank.")
+    if vpa == ME["vpa"]: return jsonify(ok=False, msg="You cannot request money from yourself.")
+    try: amt = round(float(d.get("amount")), 2)
+    except (TypeError, ValueError): return jsonify(ok=False, msg="Enter an amount.")
+    if not 1 <= amt <= 100000: return jsonify(ok=False, msg="Amount must be between Rs 1 and Rs 1,00,000.")
+    name = NAMES.get(vpa) or next((c["name"] for c in CONTACTS if c["vpa"] == vpa), None) or vpa.split("@")[0]
+    r = {"id": (max([s["id"] for s in SENT]) + 1) if SENT else 1, "name": name, "vpa": vpa, "amount": amt,
+         "note": clean(d.get("note"), 60), "status": "Pending", "time": time.strftime("%d %b, %I:%M %p")}
+    SENT.insert(0, r)
+    return jsonify(ok=True, req=r)
+
+
+@app.post("/api/request/cancel")
+def request_cancel():
+    for s in SENT:
+        if s["id"] == (request.json or {}).get("id") and s["status"] == "Pending": s["status"] = "Cancelled"
+    return jsonify(ok=True)
+
+
+@app.post("/api/request/settle")
+def request_settle():
+    """Demo only: pretend the other person paid, so the play-money lands in the demo bank."""
+    s = next((s for s in SENT if s["id"] == (request.json or {}).get("id") and s["status"] == "Pending"), None)
+    if not s: return jsonify(ok=False, msg="That request is no longer pending.")
+    s["status"] = "Paid"
+    BANKS[DEMO_BANK] += s["amount"]
+    HIST.insert(0, {"id": len(HIST) + 1, "name": s["name"], "vpa": s["vpa"], "amount": s["amount"], "bank": DEMO_BANK,
+                    "utr": "".join(random.choices("0123456789", k=12)), "time": time.strftime("%d %b, %I:%M %p"),
+                    "status": "Success", "note": s["note"], "ts": time.time(), "dr": False, "cat": None})
+    return jsonify(ok=True, amount=s["amount"], name=s["name"], bank=DEMO_BANK)
 
 
 @app.post("/api/collect/decline")
