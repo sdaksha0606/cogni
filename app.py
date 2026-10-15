@@ -1,4 +1,4 @@
-import os, time, random, statistics, requests
+import os, re, time, random, statistics, requests
 import ipaddress
 from urllib.parse import urlparse, parse_qs, unquote
 from flask import Flask, jsonify, request, send_from_directory
@@ -21,19 +21,33 @@ CONTACTS = [{"name": "Amma", "vpa": "amma@oksbi"}, {"name": "Ramesh", "vpa": "ra
             {"name": "DMart", "vpa": "dmart@okicici"}, {"name": "TNEB Bill", "vpa": "tneb.bills@sbi"}]
 NAMES = {"amma@oksbi": "Lakshmi Kumar", "ramesh@okaxis": "Ramesh S", "dmart@okicici": "Avenue Supermarts Ltd",
          "tneb.bills@sbi": "TANGEDCO", "sharma.store@okaxis": "Sharma General Store",
-         "dmart-help@okxyz": "R Kumar Traders", "rewards@paytmx": "Rewards Desk", "tneb.biils@sbi": "S Mohan"}
+         "dmart-help@okxyz": "R Kumar Traders", "rewards@paytmx": "Rewards Desk", "tneb.biils@sbi": "S Mohan", "iyer.rent@okaxis": "Mr Iyer (Rent)"}
+CATS = ("Bills", "Grocery", "Misc", "Rent")
+
+
+def categorize(name, vpa="", note=""):
+    """Guess Bills / Grocery / Rent from the payee; everything else is Misc."""
+    s = f"{name} {vpa} {note}".lower()
+    for cat, keys in (("Rent", ("rent", "landlord")),
+                      ("Bills", ("bill", "tneb", "electric", "recharge", "gas", "water", "dth", "broadband")),
+                      ("Grocery", ("mart", "grocery", "store", "supermarket", "vegetable", "basket"))):
+        if any(k in s for k in keys): return cat
+    return "Misc"
+
+
 HIST = [{"id": i, "name": n, "vpa": v, "amount": a, "bank": "SBI ••1234", "utr": u, "time": t, "status": "Success",
-         "note": "", "ts": time.time() - 86400 * d, "dr": True}
+         "note": "", "ts": time.time() - 86400 * d, "dr": True, "cat": categorize(n, v)}
         for i, (n, v, a, u, t, d) in enumerate([("Amma", "amma@oksbi", 500, "428193746215", "28 Sep, 06:12 PM", 5),
                                                 ("DMart", "dmart@okicici", 640, "428377120934", "30 Sep, 07:40 PM", 3),
-                                                ("TNEB Bill", "tneb.bills@sbi", 1200, "428590013377", "01 Oct, 10:05 AM", 2)], 1)]
+                                                ("TNEB Bill", "tneb.bills@sbi", 1200, "428590013377", "01 Oct, 10:05 AM", 2),
+                                                ("Mr Iyer (Rent)", "iyer.rent@okaxis", 6500, "428111902244", "29 Sep, 09:15 AM", 4),
+                                                ("Ramesh", "ramesh@okaxis", 350, "428730045512", "02 Oct, 08:20 PM", 1.6)], 1)]
+HIST.sort(key=lambda h: -h["ts"])
 COLLECT = [{"id": 1, "from": "Refund Desk", "vpa": "rewards@paytmx", "amount": 4999, "note": "Refund pending. Approve to receive.",
             "payload": "upi://pay?pa=rewards@paytmx&pn=Refund Desk&am=4999"},
            {"id": 2, "from": "Ramesh", "vpa": "ramesh@okaxis", "amount": 500, "note": "Dinner split",
             "payload": "upi://pay?pa=ramesh@okaxis&pn=Ramesh&am=500"}]
 GLOG, PRE = [], {}
-
-
 def behavior(info, amt, ctx):
     """Signals only this app can see: the user's own history, device, city and time."""
     ok = [h for h in HIST if h.get("dr") and h["status"] == "Success"]
@@ -190,7 +204,39 @@ def balance():
 
 @app.post("/api/resolve")
 def api_resolve():
-    return jsonify(resolve(request.json.get("payload")))
+    info = resolve(request.json.get("payload"))
+    info["cat"] = categorize(info["name"] or "", info["vpa"] or "")
+    return jsonify(info)
+
+
+@app.post("/api/contacts/add")
+def add_contact():
+    d = request.json or {}
+    name = re.sub(r"[<>\"'&]", "", (d.get("name") or "").strip())[:30]
+    raw = (d.get("to") or "").strip().lower()
+    if not name: return jsonify(ok=False, msg="Enter a name.")
+    if raw.isdigit() and len(raw) == 10: vpa = raw + "@ybl"
+    elif re.fullmatch(r"[a-z0-9._-]{2,}@[a-z]{2,}", raw): vpa = raw
+    else: return jsonify(ok=False, msg="Enter a 10-digit mobile number or a UPI ID like name@bank.")
+    if any(c["vpa"] == vpa for c in CONTACTS): return jsonify(ok=False, msg="That person is already saved.")
+    CONTACTS.append({"name": name, "vpa": vpa})
+    NAMES.setdefault(vpa, name)
+    return jsonify(ok=True)
+
+
+@app.post("/api/banks/add")
+def add_bank():
+    d = request.json or {}
+    bank = re.sub(r"[^A-Za-z0-9 &.-]", "", (d.get("bank") or "").strip())[:24]
+    last4 = re.sub(r"\D", "", str(d.get("last4") or ""))
+    if not bank or len(last4) != 4: return jsonify(ok=False, msg="Enter the bank name and the last 4 digits of the account.")
+    try: bal = float(d.get("balance") or 25000)
+    except ValueError: return jsonify(ok=False, msg="Enter a valid opening balance.")
+    if not 0 <= bal <= 10_000_000: return jsonify(ok=False, msg="Opening balance must be between 0 and 1,00,00,000.")
+    key = f"{bank} ••{last4}"
+    if key in BANKS: return jsonify(ok=False, msg="That account is already linked.")
+    BANKS[key] = START[key] = bal
+    return jsonify(ok=True, bank=key)
 
 
 @app.post("/api/precheck")
@@ -290,7 +336,8 @@ def pay():
     t = {"id": len(HIST) + 1, "name": info["name"], "vpa": info["vpa"], "amount": amt, "bank": d["bank"],
          "utr": "".join(random.choices("0123456789", k=12)), "time": time.strftime("%d %b, %I:%M %p"),
          "status": "Success", "note": d.get("note", ""), "ts": time.time(), "dr": True,
-         "bal_after": BANKS[d["bank"]]}
+         "bal_after": BANKS[d["bank"]],
+         "cat": d.get("cat") if d.get("cat") in CATS else categorize(info["name"], info["vpa"], d.get("note", ""))}
     HIST.insert(0, t)
     COLLECT[:] = [c for c in COLLECT if c["id"] != d.get("cid")]
     move = {"amount": amt, "from_bank": d["bank"], "from_before": before, "from_after": BANKS[d["bank"]],
